@@ -122,8 +122,7 @@ aha-cli/
 ├── docs/
 │   └── recipes.md         # task-oriented examples (see "Documentation" below)
 ├── CHANGELOG.md           # Keep a Changelog format
-├── CONTRIBUTING.md        # dev setup, conventions, how to add a command
-└── LICENSE
+└── CONTRIBUTING.md        # dev setup, conventions, how to add a command
 ```
 
 ## Command surface

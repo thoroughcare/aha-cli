@@ -54,6 +54,9 @@ LLM clients, not humans).
 | Markdown rendering | `termimad` | for feature/comment bodies (Aha! returns HTML — pre-strip with `html2md`) |
 | HTML→Markdown | `html2md` | descriptions and comments are HTML |
 | `.netrc` parser | hand-rolled (~30 LOC) | the `netrc` crates are stale; Aha's entry format is non-standard anyway (`machine tcare type aha …`) |
+| OAuth 2.0 client | `oauth2` | handles PKCE + token exchange; standard for Rust CLIs |
+| OAuth callback server | `tiny_http` | small synchronous HTTP server for the localhost redirect URI |
+| Browser launch | `webbrowser` | cross-platform `open`/`xdg-open` wrapper |
 | Errors | `anyhow` (top-level) + `thiserror` (lib) | standard pattern |
 | Logging | `tracing` + `tracing-subscriber` | `--verbose` flag bumps levels |
 | Tests | `wiremock` | mock the Aha! HTTP API |
@@ -74,7 +77,10 @@ aha-tc/
 ├── src/
 │   ├── main.rs         # clap entry, dispatches to commands
 │   ├── lib.rs          # re-exports for integration tests
-│   ├── auth.rs         # netrc + env loading
+│   ├── auth/
+│   │   ├── mod.rs      # credential resolution (flags > env > netrc)
+│   │   ├── netrc.rs    # tokenizer + read/upsert/remove
+│   │   └── oauth.rs    # PKCE + local callback + token exchange
 │   ├── client/
 │   │   ├── mod.rs      # AhaClient: builds reqwest client, wraps every endpoint
 │   │   ├── retry.rs    # 429 middleware
@@ -115,8 +121,14 @@ Global flags:
   --no-color           Disable color output (also honors NO_COLOR env)
 
 Commands:
-  auth check                          Verify credentials are valid
+  auth login [--subdomain <name>] [--with-token]
+                                      Browser-based OAuth flow (default) or
+                                      paste a personal API key (--with-token,
+                                      reads from stdin so the token never
+                                      lands in shell history).
+  auth check                          Verify stored credentials are valid
   auth whoami                         Print authenticated user
+  auth logout                         Remove credentials from .netrc
 
   products list
 
@@ -154,20 +166,87 @@ Commands:
 
 ## Auth
 
-Priority (matches `aha-mcp` convention, plus netrc compatibility):
+### Credential resolution (every command except `auth login`)
+
+Priority order — first hit wins:
 
 1. CLI flags (`--token`, `--subdomain`)
-2. Env: `AHA_TOKEN`, `AHA_COMPANY`
-3. `~/.netrc` entry written by upstream `aha-cli`. Format observed locally:
-   `machine tcare type aha email obarnes@thoroughcare.net token <token> url https://tcare.aha.io:443`
-   Note the non-standard fields (`type`, `email`, `url`) — most `netrc` crates
-   reject this. Hand-write a tiny parser that takes the first `machine` line
-   with `type aha`, and extracts `token` and the host portion of `url`.
+2. Env: `AHA_TOKEN`, `AHA_COMPANY` (matches `aha-mcp` convention)
+3. `~/.netrc` entry, in two flavors:
+   - **`aha-tc`-native format** (what we write): standard
+     `machine <subdomain>.aha.io login oauth password <token>`. Any tool that
+     speaks netrc will see a usable Bearer-shaped credential.
+   - **Upstream `aha-cli` format** (interop): the npm CLI writes
+     `machine <subdomain> type aha email <email> token <token> url https://<subdomain>.aha.io:443`.
+     Non-standard `type` / `email` / `token` / `url` fields trip every netrc
+     parser crate I've looked at. We hand-write a ~30-LOC tokenizer that
+     accepts both shapes.
 
-`auth login` is **out of scope for v0.1**. The upstream `aha-cli`'s OAuth flow
-already works and writes `.netrc`; defer to it. If we later want a self-contained
-flow, Aha! supports OAuth 2.0 — we can add `aha auth login` that does the
-device code or browser-callback flow ourselves.
+Failure to resolve credentials prints a one-liner pointing at `aha auth login`.
+
+### `aha auth login` — OAuth 2.0 with PKCE + local callback
+
+Mirrors the flow upstream `aha-cli` uses, and `gh auth login --web`,
+`flyctl auth login`, etc. Concretely:
+
+1. CLI prompts for the Aha! subdomain (or reads `--subdomain` / `AHA_COMPANY`).
+2. CLI generates a PKCE `code_verifier` + `code_challenge` (S256).
+3. CLI starts a local HTTP listener on a random high port (e.g. via
+   `std::net::TcpListener::bind("127.0.0.1:0")` and reads back the assigned
+   port).
+4. CLI opens the browser to:
+   ```
+   https://secure.aha.io/oauth/authorize?
+     client_id=<aha-tc client id>&
+     redirect_uri=http://127.0.0.1:<port>/callback&
+     response_type=code&
+     code_challenge=<challenge>&
+     code_challenge_method=S256&
+     scope=&
+     state=<random>
+   ```
+5. User authorizes in browser; Aha! redirects to the local callback with
+   `?code=…&state=…`.
+6. Local server validates `state`, captures `code`, returns a tiny "you can
+   close this tab" HTML page, then shuts down.
+7. CLI POSTs to `https://secure.aha.io/oauth/token` with
+   `grant_type=authorization_code`, `code`, `code_verifier`, `client_id`,
+   `redirect_uri`. Receives `access_token` (and possibly `refresh_token`).
+8. CLI writes `~/.netrc` (creating with `0600`, merging if it exists — never
+   clobber other entries).
+
+**Crates:** `oauth2` (handles PKCE + token exchange), `tiny_http` (callback
+server), `webbrowser` (cross-platform browser launch). Total ~150 LOC of glue.
+
+**OAuth client registration — open question for the team.** Aha! requires a
+registered OAuth app (`client_id`). Three options:
+
+- (a) **Reuse `aha-cli`'s `client_id`.** The upstream package is open source on
+  npm; the ID is plain text. Functional but feels off — we'd be shipping
+  someone else's app identifier.
+- (b) **Register a `aha-tc` OAuth app under the ThoroughCare Aha! account.**
+  Cleanest. Bake the `client_id` into the binary, no `client_secret` because
+  PKCE makes the public-client model safe. ~5 minutes of setup in the Aha!
+  admin UI (`/settings/account/integrations`).
+- (c) **Skip OAuth, only support `--with-token`.** User generates a personal
+  API key at `/settings/personal/developer` and pipes it into
+  `aha auth login --with-token`. Simplest to implement (~20 LOC) but worse UX.
+
+**Recommendation: (b), with (c) as a `--with-token` fallback for headless /
+CI environments.**
+
+### `aha auth login --with-token`
+
+Reads a token from stdin (so it doesn't appear in `ps` or shell history),
+verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
+
+### `.netrc` writes
+
+- Create with mode `0600` if it doesn't exist.
+- If it exists, parse → replace any matching `machine <subdomain>.aha.io`
+  block → rewrite atomically (`tempfile` + `rename`).
+- Don't touch other tools' entries.
+- Document in `--help` exactly what we write so users can audit.
 
 ## Implementation phases
 
@@ -175,6 +254,17 @@ device code or browser-callback flow ourselves.
 - `cargo new --bin aha-tc` (already created the dir; just add `Cargo.toml`).
 - `clap` skeleton with `aha auth check` as the only working command.
 - CI workflow (`fmt + clippy + test`).
+
+### Phase 0.5 — auth (~half day)
+- Hand-rolled netrc tokenizer (handles both upstream-`aha-cli` and standard
+  formats), with `read` / `upsert` / `remove` operations.
+- `auth login --with-token` first — useful immediately and validates the
+  netrc round-trip.
+- `auth check` (`GET /api/v1/me`).
+- `auth login` (browser OAuth + PKCE) — gated on team picking option (a/b/c)
+  above. If (b), this is ~150 LOC of glue around `oauth2` + `tiny_http` +
+  `webbrowser` once we have the `client_id`.
+- `auth logout` — netrc rewrite minus our entry.
 
 ### Phase 1 — read-only browse (~half day)
 - `AhaClient` with bearer auth + base URL building.
@@ -203,7 +293,9 @@ device code or browser-callback flow ourselves.
 - `brew tap thoroughcare/tap` formula + GitHub release workflow that
   cross-compiles macOS arm64/x86_64 + linux x86_64.
 
-**Total estimate: ~2 dev days for a polished v0.1.**
+**Total estimate: ~2.5 dev days for a polished v0.1** (3 days if we go with
+OAuth flow option (b) and need to register the Aha! app + iterate on the
+flow).
 
 ## Optional: codegen path
 

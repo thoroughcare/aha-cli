@@ -109,11 +109,21 @@ aha-cli/
 │       ├── todos.rs       # aha todos list/show
 │       ├── ideas.rs       # aha ideas list/show
 │       ├── backlog.rs     # aha backlog [--release X] [--epic Y] — grouped feature view
-│       └── auth.rs        # aha auth check / aha auth login (delegates to aha-cli; or write our own OAuth flow later)
-└── tests/
-    ├── netrc_parser.rs
-    ├── retry.rs
-    └── e2e_with_wiremock.rs
+│       └── auth.rs        # aha auth login/check/logout/whoami
+├── tests/
+│   ├── auth_netrc.rs      # netrc tokenizer + atomic rewrite round-trips
+│   ├── retry.rs           # 429 + Retry-After honoring
+│   ├── pagination.rs      # async stream walks all pages, stops on empty
+│   ├── snapshots/         # insta snapshots for table / kv-detail output
+│   └── cmd_*.rs           # one integration test file per command, each
+│                          # spinning up wiremock with canned fixtures
+├── tests/fixtures/        # captured Aha! API responses (sanitized) used by
+│                          # the cmd_* tests — see "Test fixtures" below
+├── docs/
+│   └── recipes.md         # task-oriented examples (see "Documentation" below)
+├── CHANGELOG.md           # Keep a Changelog format
+├── CONTRIBUTING.md        # dev setup, conventions, how to add a command
+└── LICENSE
 ```
 
 ## Command surface
@@ -274,9 +284,136 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 - `brew tap thoroughcare/tap` formula + GitHub release workflow that
   cross-compiles macOS arm64/x86_64 + linux x86_64.
 
-**Total estimate: ~2 dev days for a polished read-only v0.1** (2.5 days if we
-go with OAuth flow option (b) and need to register the Aha! app + iterate on
-the flow).
+**Total estimate: ~2.5 dev days for a polished read-only v0.1** including the
+testing and documentation work below (3 days if we register the Aha! OAuth
+app and need to iterate on the flow).
+
+## Testing
+
+The aim is fast feedback locally and a meaningful safety net in CI, without
+testing against the live Aha! API (rate limits, flaky data, requires live
+credentials).
+
+### Layers
+
+1. **Unit tests** (inline `#[cfg(test)]` modules), for pure functions:
+   - `auth/netrc.rs` — tokenizer round-trips, malformed-input handling,
+     atomic rewrite preserves unrelated entries.
+   - `client/models.rs` — snowflake ID round-trip (the 19-digit
+     `7626760672407598886` survives ser/de as a `String`), `#[serde(other)]`
+     enum catch-alls swallow unknown variants without panicking,
+     `#[serde(default)]` lets responses with missing optional fields parse.
+   - `client/pagination.rs` — exhausts pages, halts on empty page.
+   - `output/table.rs` — column truncation, color stripping under
+     `--no-color` / `NO_COLOR`.
+
+2. **HTTP integration tests** (`tests/cmd_*.rs`), each spinning up
+   `wiremock::MockServer` with canned fixtures and exercising one CLI command
+   end-to-end via `assert_cmd::Command`. Examples:
+   - `cmd_features_show.rs`: GET feature → fan-out for requirements + comments
+     + todos → table output matches snapshot. Verifies the bounded-concurrency
+     fan-out actually issues parallel requests (count `wiremock` recorded
+     calls).
+   - `cmd_features_list_paginated.rs`: 3 pages of 50, verify all 150 surface,
+     no duplicate keys.
+   - `cmd_backlog.rs`: features grouped by release+epic, snapshot the table.
+   - `cmd_auth_check.rs`: 200 → success; 401 → exits non-zero with a
+     pointer to `aha auth login`.
+   - `cmd_retry_429.rs`: server returns 429 with `Retry-After: 1` then 200,
+     command succeeds, retry happened exactly once, total wall time ≥ 1s.
+
+3. **Snapshot tests** for human output (`insta` crate). Tables are exactly
+   the surface most likely to break invisibly. Snapshots live under
+   `tests/snapshots/` and are reviewed via `cargo insta review`. JSON output
+   is structured enough to assert on directly with `serde_json::Value` and
+   `assert_eq!` — no snapshot needed.
+
+4. **OAuth flow** — covered by unit tests on the assembled authorize URL
+   (correct scopes, PKCE challenge format, redirect URI matches the listener)
+   and a happy-path integration test that fakes the `secure.aha.io` endpoints
+   with `wiremock` and the local callback by making the callback request from
+   the test itself instead of a browser. Browser launch is mocked behind a
+   trait so the test never opens an actual browser.
+
+5. **Live smoke test** (manually invoked, not CI):
+   `cargo run -- auth check && cargo run -- products list` against the real
+   ThoroughCare Aha! account. Documented in `CONTRIBUTING.md`. Not gating
+   anything — purely a sanity check before tagging a release.
+
+### Test fixtures
+
+The `cmd_*.rs` tests need realistic response bodies. Capture once, sanitize,
+commit. The shape is more important than the content; redact:
+
+- All snowflake IDs → kept (they're not secrets, but normalize to a small set).
+- `assigned_to_user.email`, names, profile URLs → replace with
+  `test-user@example.com`, `Test User`.
+- Workspace-specific tags / custom field values → replace with neutral
+  placeholders.
+- Anything Aha-internal that looks like an account identifier or token.
+
+A small `scripts/capture-fixture.sh` (jq-based) automates the capture +
+sanitization round-trip so we can refresh fixtures without by-hand editing.
+
+### CI (`.github/workflows/ci.yml`)
+
+On every PR + push to `main`:
+
+```
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo deny check    # license + advisory check
+```
+
+Matrix: macOS arm64 + ubuntu latest. Both run all four steps. Caches
+`~/.cargo/registry` and `target/`.
+
+## Documentation
+
+Three audiences, three doc surfaces:
+
+### 1. End users (humans running `aha` on their laptop)
+
+- **`README.md`** — install (one paragraph each for `brew tap` and
+  `cargo install`), one-line quickstart (`aha auth login && aha backlog`),
+  env-var reference table, link to `docs/recipes.md`.
+- **`aha --help` and `aha <cmd> --help`** — auto-generated by `clap`. Every
+  argument and subcommand carries a `#[arg(help = "...")]` so the generated
+  help is genuinely useful, not stub text.
+- **Man pages** — generated at build time with `clap_mangen`; shipped in the
+  brew formula and `cargo install`-ed via a build script that emits to
+  `target/man/`. `man aha` works after install.
+- **Shell completions** — `clap_complete` for bash/zsh/fish, generated the
+  same way and installed alongside the binary.
+- **`docs/recipes.md`** — task-oriented examples ("show me everything in the
+  current sprint", "find features assigned to me", "see all open todos on a
+  feature"). The README links here for anything past the quickstart.
+
+### 2. AI agents / scripts (anything piping our output)
+
+- **`README.md` "JSON mode" section** — explicit list of fields per command's
+  JSON output, with a guarantee they're stable within a v0.x line. Documents
+  the auto-TTY-detection rule.
+- **JSON schemas** — for each `list` / `show` command, `aha <cmd> --schema`
+  prints a JSON Schema describing the output shape. Cheap because we already
+  have `serde` types; `schemars` derive does the work. Lets agents validate
+  the shape they got, and lets us version-bump confidently.
+
+### 3. Contributors (anyone editing this repo)
+
+- **`CONTRIBUTING.md`** — `cargo test` / `cargo insta review` /
+  `cargo run -- ...` quickstart, the live-smoke-test command, how to add a
+  new command (the `cmd/`+ `client/` + `output/` triad), the fixture-capture
+  recipe.
+- **`PLAN.md`** — this file. Kept as the source of truth for design
+  intent. Update it when we change direction; don't let it rot.
+- **`CHANGELOG.md`** — Keep a Changelog format. Hand-written, concise, one
+  entry per release. CI fails the release workflow if `CHANGELOG.md` doesn't
+  contain a matching `## [X.Y.Z]` heading.
+- **Inline rustdoc** — public items in `client/` and `auth/` get a
+  one-line `///` summary. Don't over-comment internals; the project is
+  small enough to read.
 
 ## Open questions for the team
 

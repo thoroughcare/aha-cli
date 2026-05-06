@@ -22,12 +22,14 @@ fn version_flag_prints_version() {
 }
 
 #[test]
-fn auth_check_stub_runs() {
+fn auth_help_lists_subcommands() {
     Command::cargo_bin("aha")
         .unwrap()
-        .arg("auth")
-        .arg("check")
+        .args(["auth", "--help"])
         .assert()
         .success()
-        .stderr(predicate::str::contains("not implemented yet"));
+        .stdout(predicate::str::contains("login"))
+        .stdout(predicate::str::contains("check"))
+        .stdout(predicate::str::contains("whoami"))
+        .stdout(predicate::str::contains("logout"));
 }

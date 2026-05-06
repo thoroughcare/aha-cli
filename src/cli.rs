@@ -5,7 +5,9 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 use crate::auth::{self, netrc, Credentials, Overrides};
+use crate::client::resources::FeatureFilters;
 use crate::client::AhaClient;
+use crate::cmd;
 use crate::output::OutputFormat;
 
 /// Command-line client for the Aha! API.
@@ -72,6 +74,138 @@ pub enum Command {
     /// Authenticate to Aha! and manage credentials.
     #[command(subcommand)]
     Auth(AuthCommand),
+
+    /// List products (workspaces).
+    #[command(subcommand)]
+    Products(ProductsCommand),
+
+    /// Browse releases.
+    #[command(subcommand)]
+    Releases(ReleasesCommand),
+
+    /// Browse epics.
+    #[command(subcommand)]
+    Epics(EpicsCommand),
+
+    /// Browse features.
+    #[command(subcommand)]
+    Features(FeaturesCommand),
+
+    /// Browse requirements.
+    #[command(subcommand)]
+    Requirements(RequirementsCommand),
+
+    /// Browse to-dos.
+    #[command(subcommand)]
+    Todos(TodosCommand),
+
+    /// Browse ideas.
+    #[command(subcommand)]
+    Ideas(IdeasCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProductsCommand {
+    /// List all products.
+    List,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ReleasesCommand {
+    /// List releases, optionally filtered to one product.
+    List {
+        /// Product reference prefix (e.g. `TC`) or ID.
+        #[arg(long)]
+        product: Option<String>,
+    },
+    /// Show a single release by reference (e.g. `TC-R-15`) or ID.
+    Show {
+        #[arg()]
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EpicsCommand {
+    /// List epics, optionally filtered by product or release.
+    List {
+        #[arg(long)]
+        product: Option<String>,
+        #[arg(long)]
+        release: Option<String>,
+    },
+    /// Show a single epic.
+    Show {
+        #[arg()]
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FeaturesCommand {
+    /// List features.
+    List {
+        #[arg(long)]
+        product: Option<String>,
+        #[arg(long)]
+        release: Option<String>,
+        #[arg(long)]
+        epic: Option<String>,
+        /// Filter by tag.
+        #[arg(long)]
+        tag: Option<String>,
+        /// Filter by assignee email.
+        #[arg(long = "assignee")]
+        assigned_to_user: Option<String>,
+        /// Only features updated since (ISO 8601 date or datetime).
+        #[arg(long = "updated-since")]
+        updated_since: Option<String>,
+        /// Free-text query.
+        #[arg(long, short = 'q')]
+        query: Option<String>,
+    },
+    /// Show a feature with requirements, comments, and to-dos.
+    Show {
+        #[arg()]
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RequirementsCommand {
+    /// Show a single requirement.
+    Show {
+        #[arg()]
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TodosCommand {
+    /// List to-dos, optionally scoped to a feature.
+    List {
+        #[arg(long)]
+        feature: Option<String>,
+    },
+    /// Show a single to-do.
+    Show {
+        #[arg()]
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IdeasCommand {
+    /// List ideas, optionally filtered to one product.
+    List {
+        #[arg(long)]
+        product: Option<String>,
+    },
+    /// Show a single idea.
+    Show {
+        #[arg()]
+        id: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -113,7 +247,14 @@ pub async fn run() -> ExitCode {
     init_tracing(cli.verbose);
 
     let result: Result<()> = match &cli.command {
-        Command::Auth(cmd) => dispatch_auth(&cli, cmd).await,
+        Command::Auth(c) => dispatch_auth(&cli, c).await,
+        Command::Products(c) => dispatch_products(&cli, c).await,
+        Command::Releases(c) => dispatch_releases(&cli, c).await,
+        Command::Epics(c) => dispatch_epics(&cli, c).await,
+        Command::Features(c) => dispatch_features(&cli, c).await,
+        Command::Requirements(c) => dispatch_requirements(&cli, c).await,
+        Command::Todos(c) => dispatch_todos(&cli, c).await,
+        Command::Ideas(c) => dispatch_ideas(&cli, c).await,
     };
 
     match result {
@@ -232,6 +373,104 @@ fn auth_logout(cli: &Cli, args: &LogoutArgs) -> Result<()> {
     netrc::remove(&netrc::default_path()?, &host)?;
     println!("Removed credentials for {host}");
     Ok(())
+}
+
+async fn build_client(cli: &Cli) -> Result<AhaClient> {
+    let creds = auth::resolve(&cli.overrides())?;
+    AhaClient::new(&creds)
+}
+
+async fn dispatch_products(cli: &Cli, command: &ProductsCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        ProductsCommand::List => cmd::products::list(&client, cli.resolved_format()).await,
+    }
+}
+
+async fn dispatch_releases(cli: &Cli, command: &ReleasesCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        ReleasesCommand::List { product } => {
+            cmd::releases::list(&client, product.as_deref(), cli.resolved_format()).await
+        }
+        ReleasesCommand::Show { id } => {
+            cmd::releases::show(&client, id, cli.resolved_format()).await
+        }
+    }
+}
+
+async fn dispatch_epics(cli: &Cli, command: &EpicsCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        EpicsCommand::List { product, release } => {
+            cmd::epics::list(
+                &client,
+                product.as_deref(),
+                release.as_deref(),
+                cli.resolved_format(),
+            )
+            .await
+        }
+        EpicsCommand::Show { id } => cmd::epics::show(&client, id, cli.resolved_format()).await,
+    }
+}
+
+async fn dispatch_features(cli: &Cli, command: &FeaturesCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        FeaturesCommand::List {
+            product,
+            release,
+            epic,
+            tag,
+            assigned_to_user,
+            updated_since,
+            query,
+        } => {
+            let filters = FeatureFilters {
+                product: product.clone(),
+                release: release.clone(),
+                epic: epic.clone(),
+                query: query.clone(),
+                tag: tag.clone(),
+                assigned_to_user: assigned_to_user.clone(),
+                updated_since: updated_since.clone(),
+            };
+            cmd::features::list(&client, filters, cli.resolved_format()).await
+        }
+        FeaturesCommand::Show { id } => {
+            cmd::features::show(&client, id, cli.resolved_format()).await
+        }
+    }
+}
+
+async fn dispatch_requirements(cli: &Cli, command: &RequirementsCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        RequirementsCommand::Show { id } => {
+            cmd::requirements::show(&client, id, cli.resolved_format()).await
+        }
+    }
+}
+
+async fn dispatch_todos(cli: &Cli, command: &TodosCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        TodosCommand::List { feature } => {
+            cmd::todos::list(&client, feature.as_deref(), cli.resolved_format()).await
+        }
+        TodosCommand::Show { id } => cmd::todos::show(&client, id, cli.resolved_format()).await,
+    }
+}
+
+async fn dispatch_ideas(cli: &Cli, command: &IdeasCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        IdeasCommand::List { product } => {
+            cmd::ideas::list(&client, product.as_deref(), cli.resolved_format()).await
+        }
+        IdeasCommand::Show { id } => cmd::ideas::show(&client, id, cli.resolved_format()).await,
+    }
 }
 
 fn read_token_from_stdin() -> Result<String> {

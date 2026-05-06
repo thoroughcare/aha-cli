@@ -1,11 +1,12 @@
+pub mod models;
+pub mod resources;
+mod retry;
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
 use crate::auth::Credentials;
 
-/// Minimal Aha! HTTP client. Phase 0.5 only exposes `me()` for `auth check`
-/// and `auth whoami`. Phase 1 will extend this with retry middleware,
-/// pagination, and resource methods.
 #[derive(Debug, Clone)]
 pub struct AhaClient {
     base_url: String,
@@ -21,7 +22,6 @@ impl AhaClient {
         Self::with_base_url(creds, &base)
     }
 
-    /// Construct a client pointed at an arbitrary base URL. Used by tests.
     pub fn with_base_url(creds: &Credentials, base_url: &str) -> Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         let mut auth_value =
@@ -46,21 +46,17 @@ impl AhaClient {
         })
     }
 
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     /// GET /api/v1/me — used by `auth check` and `auth whoami`.
     pub async fn me(&self) -> Result<MeUser> {
-        let url = format!("{}/me", self.base_url);
-        let resp = self
-            .http
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("GET /me returned {status}: {body}");
-        }
-        let body: MeResponse = resp.json().await.context("decoding /me response")?;
+        let body: MeResponse = self.get_json("/me").await?;
         Ok(body.user)
     }
 }
@@ -108,7 +104,7 @@ mod tests {
 
         let client = AhaClient::with_base_url(&creds("testtoken"), &server.uri()).unwrap();
         let me = client.me().await.unwrap();
-        assert_eq!(me.id, "7626760672407598886"); // 19-digit snowflake stays a string
+        assert_eq!(me.id, "7626760672407598886");
         assert_eq!(me.email, "test-user@example.com");
     }
 
@@ -124,5 +120,29 @@ mod tests {
         let client = AhaClient::with_base_url(&creds("bad"), &server.uri()).unwrap();
         let err = client.me().await.unwrap_err();
         assert!(format!("{err:#}").contains("401"));
+    }
+
+    #[tokio::test]
+    async fn retries_on_429_then_succeeds() {
+        let server = MockServer::start().await;
+        // First call: 429 with Retry-After: 0 (no real wait).
+        Mock::given(method("GET"))
+            .and(path("/me"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Second call: success.
+        Mock::given(method("GET"))
+            .and(path("/me"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "user": {"id":"1","name":"u","email":"u@e"}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AhaClient::with_base_url(&creds("t"), &server.uri()).unwrap();
+        let me = client.me().await.unwrap();
+        assert_eq!(me.id, "1");
     }
 }

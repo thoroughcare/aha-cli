@@ -45,7 +45,7 @@ account; for now `--with-token` is the supported path.
 | `aha epics list [--product] [--release]` | List epics. |
 | `aha epics show <ref>`          | Show one epic. |
 | `aha features list [filters]`   | List features. Filters: `--product`, `--release`, `--epic`, `--tag`, `--assignee`, `--updated-since`, `-q`. |
-| `aha features show <ref>`       | Deep view: feature + requirements + comments + todos. |
+| `aha features show <ref>`       | Deep view: feature + requirements + comments + todos (with bodies and attachments). |
 | `aha requirements show <ref>`   | Show one requirement. |
 | `aha todos list [--feature]`    | List todos. |
 | `aha todos show <id>`           | Show one todo. |
@@ -67,6 +67,43 @@ By default, `aha` checks whether stdout is a terminal:
 
 Override explicitly with `--json`, `--no-json`, or `--yaml`. `--no-color`
 disables ANSI; `NO_COLOR` env var is honored.
+
+### `features show` JSON shape
+
+The deep view fans out per-feature to surface data the list endpoint
+omits:
+
+```jsonc
+{
+  "feature":      { ... },
+  "requirements": [ ... ],
+  "comments":     [ { "body": "...", "attachments": [ ... ] }, ... ],
+  "todos": [
+    {
+      "todo": {
+        "id": "...", "name": "...", "status": "...",
+        "body": "free-text body, only present on the per-task GET",
+        "attachments": [ { "id", "file_name", "download_url",
+                           "content_type", "file_size" }, ... ]
+      },
+      "comments": [ { "body": "...", "attachments": [ ... ] }, ... ]
+    },
+    ...
+  ]
+}
+```
+
+`Todo.body` and `Todo.attachments` come from a per-task GET that runs in
+parallel with the comment fetch — they're omitted by the list endpoint.
+Bounded at 3 in-flight requests to stay under Aha!'s ~5 req/sec cap.
+
+In table mode, todos with body/attachments/comments are tagged inline:
+
+```
+todos:
+  [completed] Clinical Input review  [body; 1 attachment(s)]
+  [completed] Acceptance Criteria Review  [body; 1 comment(s)]
+```
 
 ## Authentication
 

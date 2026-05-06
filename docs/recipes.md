@@ -27,9 +27,33 @@ aha features list --assignee "$(git config user.email)"
 aha features show TC-1109
 ```
 
-This fans out in parallel to fetch requirements + comments + todos
-(bounded at 3 concurrent requests to stay under Aha!'s ~5 req/sec rate
-limit).
+This fans out in parallel to fetch requirements + comments + todos.
+Each todo gets a per-id GET so its `body` and `attachments` are
+included alongside its comments — none of which are returned by the
+list endpoint. Bounded at 3 concurrent requests to stay under Aha!'s
+~5 req/sec rate limit.
+
+## Find every file or image attached to a feature
+
+```sh
+aha features show TC-1109 --json | jq '
+  [
+    .comments[]?.attachments[]?,
+    .todos[]?.todo.attachments[]?,
+    .todos[]?.comments[]?.attachments[]?
+  ]
+  | map({file_name, content_type, file_size, download_url})'
+```
+
+Three sources of attachments roll up here: feature-level comments,
+todos themselves (via the per-task GET), and todo comments.
+
+## Pull every todo body for a feature
+
+```sh
+aha features show TC-1109 --json \
+  | jq -r '.todos[] | "## \(.todo.name)\n\n\(.todo.body // "(no body)")\n"'
+```
 
 ## See what's recently moved
 

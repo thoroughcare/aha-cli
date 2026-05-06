@@ -218,8 +218,7 @@ Same pattern as `gh auth login --web`, `flyctl auth login`, etc. Concretely:
 7. CLI POSTs to `https://secure.aha.io/oauth/token` with
    `grant_type=authorization_code`, `code`, `code_verifier`, `client_id`,
    `redirect_uri`. Receives `access_token` (and possibly `refresh_token`).
-8. CLI writes `~/.netrc` (creating with `0600`, merging if it exists — never
-   clobber other entries).
+8. CLI writes `~/.netrc` (see "`.netrc` writes" below for perms semantics).
 
 **Crates:** `oauth2` (handles PKCE + token exchange), `tiny_http` (callback
 server), `webbrowser` (cross-platform browser launch). Total ~150 LOC of glue.
@@ -238,10 +237,15 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 
 ### `.netrc` writes
 
-- Create with mode `0600` if it doesn't exist.
-- If it exists, parse → replace any matching `machine <subdomain>.aha.io`
-  block → rewrite atomically (`tempfile` + `rename`).
-- Don't touch other tools' entries.
+- **Create** with mode `0600` if the file doesn't exist. The token is a
+  secret, and `ftp(1)` / classic `curl --netrc` / some git credential helpers
+  refuse to read `.netrc` if it's group/world-readable — using `0600` keeps
+  us aligned with the rest of the user's tooling.
+- **Update** atomically (`tempfile` + `rename`) — parse, replace any matching
+  `machine <subdomain>.aha.io` block, write. Preserve the file's existing
+  permissions; don't tighten or loosen them. Don't touch other tools' entries.
+- **Read** with no perms enforcement — if the user has loosened their own
+  file we still use it, but log a warning the first time.
 - Document in `--help` exactly what we write so users can audit.
 
 ## Implementation phases

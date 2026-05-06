@@ -56,6 +56,8 @@ account; for now `--with-token` is the supported path.
 
 Run `aha <command> --help` for full details.
 
+See [`docs/recipes.md`](docs/recipes.md) for task-oriented examples.
+
 ## Output formats
 
 By default, `aha` checks whether stdout is a terminal:
@@ -114,5 +116,3 @@ aha auth login --with-token --subdomain tcare < token.txt
 aha products list
 aha backlog
 ```
-
-See [`docs/recipes.md`](docs/recipes.md) for task-oriented examples.

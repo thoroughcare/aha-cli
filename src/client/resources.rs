@@ -3,7 +3,7 @@
 //! GETs. The deep `feature_show` does a bounded-concurrency fan-out to
 //! pull requirements + comments + todos in parallel.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 
@@ -286,6 +286,63 @@ impl AhaClient {
         let env: OneEnvelope<Idea> = self.get_json(&format!("/ideas/{id_or_ref}")).await?;
         env.idea
             .ok_or_else(|| anyhow::anyhow!("idea {id_or_ref} not found"))
+    }
+
+    // ---------- Attachments ----------
+
+    /// Look up attachment metadata by id. The response carries a fresh
+    /// `download_url` — typically a short-lived presigned URL, so re-fetch
+    /// before streaming bytes rather than relying on a cached value.
+    pub async fn get_attachment(&self, id: &str) -> Result<Attachment> {
+        // Aha! returns `{"attachment": {...}}` here; OneEnvelope doesn't yet
+        // model that key, so deserialize the wrapper inline.
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            attachment: Attachment,
+        }
+        let w: Wrapper = self.get_json(&format!("/attachments/{id}")).await?;
+        Ok(w.attachment)
+    }
+
+    /// Resolve the attachment, then stream bytes from `download_url` into
+    /// `writer`. Returns the (refreshed) metadata so callers can name the
+    /// output file.
+    pub async fn download_attachment<W>(&self, id: &str, writer: &mut W) -> Result<Attachment>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
+        let meta = self.get_attachment(id).await?;
+        let url = meta
+            .download_url
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("attachment {id} has no download_url"))?;
+        // Use a fresh client without our default Authorization header — the
+        // download_url is typically a presigned S3 URL, and adding an
+        // Authorization header to a presigned request makes S3 reject it.
+        // If Aha! ever serves a non-presigned URL that requires bearer, we
+        // can detect the host and switch.
+        let resp = reqwest::Client::new()
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("downloading attachment {id}: HTTP {status}: {body}");
+        }
+        let mut stream = resp.bytes_stream();
+        use futures::StreamExt;
+        while let Some(chunk) = stream.next().await {
+            let bytes = chunk.context("reading attachment stream")?;
+            writer
+                .write_all(&bytes)
+                .await
+                .context("writing attachment bytes")?;
+        }
+        writer.flush().await.context("flushing attachment writer")?;
+        Ok(meta)
     }
 }
 

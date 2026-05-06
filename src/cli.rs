@@ -103,6 +103,12 @@ pub enum Command {
     #[command(subcommand)]
     Ideas(IdeasCommand),
 
+    /// Download attached files / images. (Note: Aha!'s download URL
+    /// currently requires a browser session — the API token gets
+    /// /access_denied. Command is wired up; awaits Aha! API support.)
+    #[command(subcommand)]
+    Attachments(AttachmentsCommand),
+
     /// Show the backlog grouped by release → epic → status.
     Backlog(BacklogArgs),
 
@@ -115,6 +121,23 @@ pub struct CompletionsArgs {
     /// Shell to emit completions for.
     #[arg(value_enum)]
     pub shell: clap_complete::Shell,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AttachmentsCommand {
+    /// Download an attachment by id. Default output path is the
+    /// server-supplied `file_name` in the current directory; use `-o <path>`
+    /// to choose, or `-o -` to write the bytes to stdout.
+    Download {
+        #[arg()]
+        id: String,
+        /// Output path. `-` writes to stdout (binary-safe).
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -284,6 +307,7 @@ pub async fn run() -> ExitCode {
         Command::Requirements(c) => dispatch_requirements(&cli, c).await,
         Command::Todos(c) => dispatch_todos(&cli, c).await,
         Command::Ideas(c) => dispatch_ideas(&cli, c).await,
+        Command::Attachments(c) => dispatch_attachments(&cli, c).await,
         Command::Backlog(args) => dispatch_backlog(&cli, args).await,
         Command::Completions(args) => emit_completions(args),
     };
@@ -491,6 +515,23 @@ async fn dispatch_todos(cli: &Cli, command: &TodosCommand) -> Result<()> {
             cmd::todos::list(&client, feature.as_deref(), cli.resolved_format()).await
         }
         TodosCommand::Show { id } => cmd::todos::show(&client, id, cli.resolved_format()).await,
+    }
+}
+
+async fn dispatch_attachments(cli: &Cli, command: &AttachmentsCommand) -> Result<()> {
+    let client = build_client(cli).await?;
+    match command {
+        AttachmentsCommand::Download { id, output, force } => {
+            let out = match output.as_deref() {
+                None => cmd::attachments::Output::Default { force: *force },
+                Some("-") => cmd::attachments::Output::Stdout,
+                Some(path) => cmd::attachments::Output::Path {
+                    path: std::path::PathBuf::from(path),
+                    force: *force,
+                },
+            };
+            cmd::attachments::download(&client, id, out, cli.resolved_format()).await
+        }
     }
 }
 

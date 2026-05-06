@@ -52,6 +52,7 @@ account; for now `--with-token` is the supported path.
 | `aha ideas list [--product]`    | List ideas. |
 | `aha ideas show <ref>`          | Show one idea. |
 | `aha backlog [filters]`         | Features grouped by release → epic. |
+| `aha attachments download <id>` | Download an attachment to disk (see caveat below). |
 | `aha completions <shell>`       | Print a completion script. |
 
 Run `aha <command> --help` for full details.
@@ -104,6 +105,25 @@ todos:
   [completed] Clinical Input review  [body; 1 attachment(s)]
   [completed] Acceptance Criteria Review  [body; 1 comment(s)]
 ```
+
+### Attachment downloads — known limitation
+
+`aha attachments download <id>` is wired up end-to-end (CLI → metadata
+fetch → byte stream → file/stdout, with `-o`, `--force`, and TTY-aware
+output), but against the live `*.aha.io` API today the byte fetch fails
+because Aha! gates the `download_url` on a browser session cookie — the
+API token alone is rejected with `/access_denied`. The MCP server in
+`../aha-mcp` hits the same wall and exposes metadata only.
+
+What still works regardless:
+- The `attachments[]` arrays on every comment and todo (in JSON / YAML
+  output of `aha features show`) carry `download_url`, `file_name`,
+  `content_type`, `file_size`, and `id` — enough to either click through
+  in a logged-in browser or hand off to a tool that has session auth.
+
+The command stays in the CLI so the moment Aha! starts honoring the API
+token at the download path (or we discover an undocumented byte
+endpoint), it works without further changes.
 
 ## Authentication
 

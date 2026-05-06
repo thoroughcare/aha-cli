@@ -299,6 +299,44 @@ check_with_output "ideas list returns JSON array" \
   'jq -e "type == \"array\"" >/dev/null' \
   "$AHA" --json ideas list --product "$PRODUCT_PREFIX"
 
+# --- 8b. Attachments --------------------------------------------------------
+#
+# Aha!'s download URL currently rejects API-token auth (it expects a
+# browser session). We can't assert a successful byte download against
+# the live API, so we verify (a) the command is wired up, (b) it exits
+# non-zero with a recognizable error from Aha!, and (c) the metadata
+# fields the user actually relies on are present in features-show JSON.
+
+section "attachments (limited: live download blocked by Aha! auth model)"
+
+check_with_output "attachments download --help is registered" \
+  'grep -qE "Output path|--force"' \
+  "$AHA" attachments download --help
+
+# Pick any real attachment id from the feature deep payload (the rich
+# feature lookup ran earlier in section 5b — re-derive cheaply here).
+ATT_ID=""
+if [[ -n "${RICH_FEATURE:-}" ]]; then
+  ATT_ID=$("$AHA" --json features show "$RICH_FEATURE" 2>/dev/null \
+    | jq -r '
+        first(
+          .comments[]?.attachments[]?,
+          .todos[]?.todo.attachments[]?,
+          .todos[]?.comments[]?.attachments[]?
+        ) | .id // empty')
+fi
+
+if [[ -n "$ATT_ID" ]]; then
+  echo "    using attachment id: $ATT_ID (live download is expected to fail)"
+  # We expect non-zero with an Aha!-shaped error — succeeding here would
+  # actually be news worth investigating (auth may have changed).
+  check_with_output "live download exits non-zero with Aha-shaped error" \
+    'grep -qiE "(access[_ ]denied|record not found|HTTP 5)"' \
+    bash -c "! '$AHA' attachments download '$ATT_ID' -o /dev/null --force"
+else
+  echo "    (skipped live attempt — no attachments visible on $RICH_FEATURE)"
+fi
+
 # --- 9. Backlog -------------------------------------------------------------
 
 section "backlog"

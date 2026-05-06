@@ -1,3 +1,4 @@
+pub mod attachments;
 pub mod backlog;
 pub mod epics;
 pub mod features;

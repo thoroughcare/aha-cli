@@ -89,13 +89,46 @@ pub async fn show(client: &AhaClient, id: &str, format: OutputFormat) -> Result<
                 }
             }
             if !deep.comments.is_empty() {
-                println!("\ncomments: {} entries", deep.comments.len());
+                let attachments_total: usize =
+                    deep.comments.iter().map(|c| c.attachments.len()).sum();
+                let suffix = if attachments_total > 0 {
+                    format!(" ({attachments_total} attachment(s))")
+                } else {
+                    String::new()
+                };
+                println!("\ncomments: {} entries{}", deep.comments.len(), suffix);
             }
             if !deep.todos.is_empty() {
                 println!("\ntodos:");
                 for t in &deep.todos {
                     let status = t.todo.status.clone().unwrap_or_else(|| "—".into());
-                    println!("  [{}] {}", status, t.todo.name);
+                    let mut tags = Vec::new();
+                    if t.todo
+                        .body
+                        .as_deref()
+                        .map(|b| !b.is_empty())
+                        .unwrap_or(false)
+                    {
+                        tags.push("body".to_string());
+                    }
+                    if !t.todo.attachments.is_empty() {
+                        tags.push(format!("{} attachment(s)", t.todo.attachments.len()));
+                    }
+                    let comment_attachments: usize =
+                        t.comments.iter().map(|c| c.attachments.len()).sum();
+                    if !t.comments.is_empty() {
+                        let mut s = format!("{} comment(s)", t.comments.len());
+                        if comment_attachments > 0 {
+                            s.push_str(&format!(", {comment_attachments} attachment(s)"));
+                        }
+                        tags.push(s);
+                    }
+                    let suffix = if tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  [{}]", tags.join("; "))
+                    };
+                    println!("  [{}] {}{}", status, t.todo.name, suffix);
                 }
             }
         }

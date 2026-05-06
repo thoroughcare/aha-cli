@@ -183,6 +183,95 @@ if [[ -n "$FEATURE_REF" ]]; then
 else
   echo "    (skipped features show — no features in $PRODUCT_PREFIX)"
 fi
+
+# --- 5b. Deep payload: todo bodies + attachments (feature/todo/comment) -----
+#
+# These fields only show up via the per-task GET we added on top of the list
+# fan-out. We probe a handful of features looking for one with todos so the
+# assertions exercise real API data, not just empty-array defaults.
+
+section "deep payload: todo body + attachments"
+
+# Allow an env override for CI / repeatable runs against a known-rich feature.
+RICH_FEATURE="${AHA_VERIFY_RICH_FEATURE:-}"
+if [[ -z "$RICH_FEATURE" ]]; then
+  for ref in $(jq -r '.[].reference_num' "$FEATURES_JSON" | head -20); do
+    n=$("$AHA" --json features show "$ref" 2>/dev/null | jq '.todos | length' 2>/dev/null || echo 0)
+    if [[ "$n" =~ ^[0-9]+$ && "$n" -gt 0 ]]; then
+      RICH_FEATURE="$ref"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$RICH_FEATURE" ]]; then
+  echo "    (skipped — no features with todos found in first 20 of $PRODUCT_PREFIX;" \
+       "set AHA_VERIFY_RICH_FEATURE=<ref> to override)"
+else
+  echo "    using rich feature: $RICH_FEATURE"
+  RICH_JSON=$(mktemp)
+  "$AHA" --json features show "$RICH_FEATURE" >"$RICH_JSON"
+
+  # Shape checks: every todo + every comment + every todo-comment must
+  # carry an `attachments` array, and todos must have a `body` key (null
+  # is fine; missing is not). Catches regressions where serde silently
+  # drops the field from the output.
+  check_with_output "every todo carries an attachments array" \
+    'jq -e "all(.todos[].todo; .attachments | type == \"array\")" >/dev/null' \
+    cat "$RICH_JSON"
+
+  check_with_output "every todo serializes a body field" \
+    'jq -e "all(.todos[].todo; has(\"body\"))" >/dev/null' \
+    cat "$RICH_JSON"
+
+  check_with_output "every feature comment carries an attachments array" \
+    'jq -e "(.comments | length == 0) or all(.comments[]; .attachments | type == \"array\")" >/dev/null' \
+    cat "$RICH_JSON"
+
+  check_with_output "every todo comment carries an attachments array" \
+    'jq -e "all(.todos[].comments[]?; .attachments | type == \"array\")" >/dev/null' \
+    cat "$RICH_JSON"
+
+  # Structural check on any actual attachment: must have id + file_name as
+  # strings (so a downstream consumer can render them).
+  check_with_output "all attachments have well-formed id + file_name" \
+    'jq -e "[
+        .comments[]?.attachments[]?,
+        .todos[]?.todo.attachments[]?,
+        .todos[]?.comments[]?.attachments[]?
+      ] | all(.id | type == \"string\") and all(.file_name | type == \"string\")" >/dev/null' \
+    cat "$RICH_JSON"
+
+  # Per-task GET round-trip check: at least one todo on a sufficiently
+  # rich feature should have a non-empty body OR an attachment. If the
+  # workspace happens to have only sparse todos, we soft-skip with a note.
+  RICH_BODIES=$(jq '[.todos[].todo | select(.body != null and .body != "")] | length' "$RICH_JSON")
+  RICH_ATTS=$(jq '[
+                  .comments[]?.attachments[]?,
+                  .todos[]?.todo.attachments[]?,
+                  .todos[]?.comments[]?.attachments[]?
+                ] | length' "$RICH_JSON")
+  if [[ "$RICH_BODIES" -gt 0 || "$RICH_ATTS" -gt 0 ]]; then
+    printf '  %s✓%s deep fan-out surfaced live data: %d todo body(ies), %d attachment(s)\n' \
+      "$GREEN" "$RESET" "$RICH_BODIES" "$RICH_ATTS"
+    PASS=$((PASS + 1))
+  else
+    echo "    (no live bodies or attachments on $RICH_FEATURE — shape checks above" \
+         "still validated; set AHA_VERIFY_RICH_FEATURE to a richer ref to assert)"
+  fi
+
+  # Table mode: when a todo has body/attachments, the rendered line should
+  # carry the marker tags in square brackets.
+  check_with_output "table mode tags todos with body/attachment markers when present" \
+    "if [ \"$RICH_BODIES\" -gt 0 ] || [ \"$RICH_ATTS\" -gt 0 ]; then
+       grep -qE '\\[(body|[0-9]+ attachment|[0-9]+ comment)' ;
+     else
+       cat >/dev/null ;
+     fi" \
+    "$AHA" --no-json features show "$RICH_FEATURE"
+
+  rm -f "$RICH_JSON"
+fi
 rm -f "$FEATURES_JSON"
 
 # --- 6. Filters & query strings --------------------------------------------

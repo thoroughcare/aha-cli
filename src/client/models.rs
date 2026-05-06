@@ -125,6 +125,14 @@ pub struct Todo {
     pub assigned_to_users: Vec<User>,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
+    /// Free-text body. Only populated by the `/tasks/:id` show endpoint;
+    /// the list endpoint returns lean todos without it.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Files / images attached to the todo. Same caveat as `body`: only
+    /// the show endpoint surfaces these.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -136,6 +144,22 @@ pub struct Comment {
     pub user: Option<User>,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
+    /// Files / images attached to the comment.
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct Attachment {
+    pub id: String,
+    #[serde(default)]
+    pub file_name: String,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

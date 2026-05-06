@@ -214,18 +214,24 @@ impl AhaClient {
         let comments = com_env.into_items(ListKey::Comments);
         let todos = task_env.into_items(ListKey::Tasks);
 
-        // Fan out per-todo to fetch comments. Bounded.
+        // Fan out per-todo: pull the full task object (`body`, `attachments`,
+        // …) plus its comments. The list endpoint above returns lean todos
+        // without body/attachments, so a per-id GET is the only way to get
+        // them. Bounded so the combined fan-out stays under the rate limit.
         let todos_with_comments: Vec<TodoDeep> = stream::iter(todos)
             .map(|todo| {
                 let id = todo.id.clone();
                 async move {
-                    let comments: Vec<Comment> = match self
-                        .get_json::<ListEnvelope<Comment>>(&format!("/tasks/{id}/comments"))
-                        .await
-                    {
-                        Ok(env) => env.into_items(ListKey::Comments),
-                        Err(_) => Vec::new(),
-                    };
+                    let task_path = format!("/tasks/{id}");
+                    let comments_path = format!("/tasks/{id}/comments");
+                    let (full, comments_resp) = tokio::join!(
+                        self.get_json::<OneEnvelope<Todo>>(&task_path),
+                        self.get_json::<ListEnvelope<Comment>>(&comments_path),
+                    );
+                    let todo = full.ok().and_then(|e| e.task).unwrap_or(todo);
+                    let comments = comments_resp
+                        .map(|e| e.into_items(ListKey::Comments))
+                        .unwrap_or_default();
                     TodoDeep { todo, comments }
                 }
             })
@@ -405,6 +411,20 @@ mod tests {
             .mount(&server)
             .await;
         Mock::given(method("GET"))
+            .and(path("/tasks/t1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "task": {"id":"t1","name":"todo1"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/tasks/t2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "task": {"id":"t2","name":"todo2"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
             .and(path("/tasks/t1/comments"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "comments": [],
@@ -427,6 +447,120 @@ mod tests {
         assert_eq!(deep.requirements.len(), 1);
         assert_eq!(deep.comments.len(), 1);
         assert_eq!(deep.todos.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn feature_show_surfaces_todo_body_and_attachments() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/features/TC-2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "feature": {"id":"200","reference_num":"TC-2","name":"feat"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/features/TC-2/requirements"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "requirements": [],
+                "pagination": {"current_page":1,"total_pages":1,"total_records":0}
+            })))
+            .mount(&server)
+            .await;
+        // Feature comment with an attachment.
+        Mock::given(method("GET"))
+            .and(path("/features/TC-2/comments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "comments": [{
+                    "id": "c1",
+                    "body": "see screenshot",
+                    "attachments": [{
+                        "id": "att1",
+                        "file_name": "screenshot.png",
+                        "download_url": "https://aha.example/files/att1",
+                        "content_type": "image/png",
+                        "file_size": 12345
+                    }]
+                }],
+                "pagination": {"current_page":1,"total_pages":1,"total_records":1}
+            })))
+            .mount(&server)
+            .await;
+        // Lean list response — no body, no attachments.
+        Mock::given(method("GET"))
+            .and(path("/features/TC-2/tasks"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "tasks": [{"id":"t1","name":"Investigate bug"}],
+                "pagination": {"current_page":1,"total_pages":1,"total_records":1}
+            })))
+            .mount(&server)
+            .await;
+        // Per-task GET surfaces body + attachments.
+        Mock::given(method("GET"))
+            .and(path("/tasks/t1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "task": {
+                    "id": "t1",
+                    "name": "Investigate bug",
+                    "body": "Reproduce with the attached log.",
+                    "attachments": [{
+                        "id": "att2",
+                        "file_name": "trace.log",
+                        "download_url": "https://aha.example/files/att2",
+                        "content_type": "text/plain",
+                        "file_size": 9001
+                    }]
+                }
+            })))
+            .mount(&server)
+            .await;
+        // Todo comment with its own attachment.
+        Mock::given(method("GET"))
+            .and(path("/tasks/t1/comments"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "comments": [{
+                    "id": "tc1",
+                    "body": "follow-up",
+                    "attachments": [{
+                        "id": "att3",
+                        "file_name": "diff.patch",
+                        "content_type": "text/x-diff",
+                        "file_size": 256
+                    }]
+                }],
+                "pagination": {"current_page":1,"total_pages":1,"total_records":1}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AhaClient::with_base_url(&creds(), &server.uri()).unwrap();
+        let deep = client.feature_show("TC-2").await.unwrap();
+
+        // Feature-level comment attachment.
+        assert_eq!(deep.comments[0].attachments.len(), 1);
+        assert_eq!(deep.comments[0].attachments[0].file_name, "screenshot.png");
+        assert_eq!(
+            deep.comments[0].attachments[0].content_type.as_deref(),
+            Some("image/png")
+        );
+        assert_eq!(deep.comments[0].attachments[0].file_size, Some(12345));
+
+        // Todo body + attachment came from the per-task GET, not the list.
+        assert_eq!(deep.todos.len(), 1);
+        let td = &deep.todos[0];
+        assert_eq!(
+            td.todo.body.as_deref(),
+            Some("Reproduce with the attached log.")
+        );
+        assert_eq!(td.todo.attachments.len(), 1);
+        assert_eq!(td.todo.attachments[0].file_name, "trace.log");
+
+        // Todo-comment attachment.
+        assert_eq!(td.comments.len(), 1);
+        assert_eq!(td.comments[0].attachments.len(), 1);
+        assert_eq!(td.comments[0].attachments[0].file_name, "diff.patch");
+        // download_url omitted in fixture — should default to None, not error.
+        assert!(td.comments[0].attachments[0].download_url.is_none());
     }
 
     #[test]

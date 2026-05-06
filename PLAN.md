@@ -17,8 +17,7 @@ comments, create/update todos) are deliberately deferred — see "Future" below.
    `cargo install` distribution.
 3. **First-class auth flow**: `aha auth login` runs the full OAuth 2.0 + PKCE
    browser flow ourselves. Falls back to `AHA_TOKEN` / `AHA_COMPANY` env vars
-   (matching `aha-mcp`'s convention) and reads the existing `~/.netrc` entry
-   from upstream `aha-cli` for interop.
+   (matching `aha-mcp`'s convention).
 
 ## Non-goals (v0.1)
 
@@ -48,8 +47,7 @@ comments, create/update todos) are deliberately deferred — see "Future" below.
     `get_feature` fetch — equivalent in Rust is `futures::stream::iter(...).buffer_unordered(N)`.
 - **`@cedricziel/aha-js`** (the upstream OpenAPI-generated TS SDK that `aha-mcp`
   uses): can be referenced for endpoint shapes, but we do **not** need to bind
-  to it. Aha! publishes an OpenAPI spec we can codegen from directly if
-  desired (see "Optional: codegen" below).
+  to it. We hand-write the ~10 endpoint structs we actually use.
 
 ## Tech stack
 
@@ -64,7 +62,7 @@ comments, create/update todos) are deliberately deferred — see "Future" below.
 | Output colors | `owo-colors` | lightweight, no proc macros |
 | Markdown rendering | `termimad` | for feature/comment bodies (Aha! returns HTML — pre-strip with `html2md`) |
 | HTML→Markdown | `html2md` | descriptions and comments are HTML |
-| `.netrc` parser | hand-rolled (~30 LOC) | the `netrc` crates are stale; Aha's entry format is non-standard anyway (`machine tcare type aha …`) |
+| `.netrc` parser | hand-rolled (~30 LOC) | the `netrc` crates are stale and we only need to read/write one entry shape we control |
 | OAuth 2.0 client | `oauth2` | handles PKCE + token exchange; standard for Rust CLIs |
 | OAuth callback server | `tiny_http` | small synchronous HTTP server for the localhost redirect URI |
 | Browser launch | `webbrowser` | cross-platform `open`/`xdg-open` wrapper |
@@ -177,22 +175,16 @@ Priority order — first hit wins:
 
 1. CLI flags (`--token`, `--subdomain`)
 2. Env: `AHA_TOKEN`, `AHA_COMPANY` (matches `aha-mcp` convention)
-3. `~/.netrc` entry, in two flavors:
-   - **`aha-cli`-native format** (what we write): standard
-     `machine <subdomain>.aha.io login oauth password <token>`. Any tool that
-     speaks netrc will see a usable Bearer-shaped credential.
-   - **Upstream `aha-cli` format** (interop): the npm CLI writes
-     `machine <subdomain> type aha email <email> token <token> url https://<subdomain>.aha.io:443`.
-     Non-standard `type` / `email` / `token` / `url` fields trip every netrc
-     parser crate I've looked at. We hand-write a ~30-LOC tokenizer that
-     accepts both shapes.
+3. `~/.netrc` entry written by us:
+   `machine <subdomain>.aha.io login oauth password <token>` — standard netrc
+   format, any tool that speaks netrc reads it as Basic-shaped credentials,
+   and we read it back ourselves to attach as a Bearer header.
 
 Failure to resolve credentials prints a one-liner pointing at `aha auth login`.
 
 ### `aha auth login` — OAuth 2.0 with PKCE + local callback
 
-Mirrors the flow upstream `aha-cli` uses, and `gh auth login --web`,
-`flyctl auth login`, etc. Concretely:
+Same pattern as `gh auth login --web`, `flyctl auth login`, etc. Concretely:
 
 1. CLI prompts for the Aha! subdomain (or reads `--subdomain` / `AHA_COMPANY`).
 2. CLI generates a PKCE `code_verifier` + `code_challenge` (S256).
@@ -223,22 +215,12 @@ Mirrors the flow upstream `aha-cli` uses, and `gh auth login --web`,
 **Crates:** `oauth2` (handles PKCE + token exchange), `tiny_http` (callback
 server), `webbrowser` (cross-platform browser launch). Total ~150 LOC of glue.
 
-**OAuth client registration — open question for the team.** Aha! requires a
-registered OAuth app (`client_id`). Three options:
-
-- (a) **Reuse `aha-cli`'s `client_id`.** The upstream package is open source on
-  npm; the ID is plain text. Functional but feels off — we'd be shipping
-  someone else's app identifier.
-- (b) **Register a `aha-cli` OAuth app under the ThoroughCare Aha! account.**
-  Cleanest. Bake the `client_id` into the binary, no `client_secret` because
-  PKCE makes the public-client model safe. ~5 minutes of setup in the Aha!
-  admin UI (`/settings/account/integrations`).
-- (c) **Skip OAuth, only support `--with-token`.** User generates a personal
-  API key at `/settings/personal/developer` and pipes it into
-  `aha auth login --with-token`. Simplest to implement (~20 LOC) but worse UX.
-
-**Recommendation: (b), with (c) as a `--with-token` fallback for headless /
-CI environments.**
+**OAuth client registration.** Aha! requires a registered OAuth app
+(`client_id`). Register `aha-cli` as an OAuth app under the ThoroughCare Aha!
+account (admin UI: `/settings/account/integrations`, ~5 minutes). Bake the
+`client_id` into the binary; no `client_secret` is needed because PKCE makes
+the public-client model safe. `--with-token` (below) provides the fallback for
+headless / CI environments where launching a browser isn't viable.
 
 ### `aha auth login --with-token`
 
@@ -266,9 +248,8 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 - `auth login --with-token` first — useful immediately and validates the
   netrc round-trip.
 - `auth check` (`GET /api/v1/me`).
-- `auth login` (browser OAuth + PKCE) — gated on team picking option (a/b/c)
-  above. If (b), this is ~150 LOC of glue around `oauth2` + `tiny_http` +
-  `webbrowser` once we have the `client_id`.
+- `auth login` (browser OAuth + PKCE) — ~150 LOC of glue around `oauth2` +
+  `tiny_http` + `webbrowser` once the `client_id` is registered.
 - `auth logout` — netrc rewrite minus our entry.
 
 ### Phase 1 — read-only browse (~half day)
@@ -297,24 +278,14 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 go with OAuth flow option (b) and need to register the Aha! app + iterate on
 the flow).
 
-## Optional: codegen path
-
-Aha! ships an OpenAPI spec at `https://www.aha.io/api/swagger.json`. We could
-generate the `models.rs` + low-level client with `progenitor`. Pros: less
-hand-typed boilerplate, schema drift is a `cargo build` away. Cons: the
-generated code is large and ugly, and we still need a hand-written facade for
-the parts that need pagination / retry / fan-out. **Recommendation: skip
-codegen for v0.1, hand-write the ~10 endpoints we use.** Revisit if scope
-expands.
-
 ## Open questions for the team
 
 1. **Distribution** — `brew tap thoroughcare/tap` only, or also publish to
    `crates.io`?
-2. **OAuth client registration** (blocks `auth login`) — option (a) reuse
-   upstream `aha-cli`'s `client_id`, (b) register a fresh `aha-cli` OAuth app
-   under the ThoroughCare Aha! account, or (c) skip OAuth entirely and only
-   support `--with-token`. Recommendation: (b).
+2. **OAuth client registration** (blocks `auth login`) — register a fresh
+   `aha-cli` OAuth app under the ThoroughCare Aha! account (recommended), or
+   skip OAuth entirely and only support `--with-token`. ~5 minutes of setup
+   in the Aha! admin UI either way.
 
 ## Decisions
 
@@ -351,6 +322,3 @@ expands.
     it as `Unknown(String)` and keep moving.
   - Pin the URL prefix to `/api/v1/` in one place (`AhaClient::base_url`); if
     we ever migrate to v2, it's one edit.
-- **Auth coupling to upstream `aha-cli`** — if we read `.netrc` written by it,
-  changes in their format would break us. Document the format we expect, fall
-  back to env vars cleanly.

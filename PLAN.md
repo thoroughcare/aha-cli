@@ -1,28 +1,38 @@
 # aha-tc — Implementation Plan
 
-A Rust CLI for browsing and editing the Thoroughcare Aha! workspace from the
-terminal. Drop-in successor to the unhelpful upstream `aha-cli` (which only
-exists for extension development) and a thin sibling to `aha-mcp` (which targets
-LLM clients, not humans).
+A Rust CLI for browsing the Thoroughcare Aha! workspace from the terminal.
+Drop-in successor to the unhelpful upstream `aha-cli` (which only exists for
+extension development) and a thin sibling to `aha-mcp` (which targets LLM
+clients, not humans).
 
-## Goals
+**Scope for v0.1: read-only browse + auth.** Writes (create features, post
+comments, create/update todos) are deliberately deferred — see "Future" below.
+
+## Goals (v0.1)
 
 1. **Browse** products, releases, epics, features, requirements, todos, ideas
    from the terminal — table view by default, `--json` for piping.
-2. **Edit** the entities the team actually touches day-to-day: create features,
-   add comments, create/update todos.
-3. **Single static binary**, no Node/Ruby runtime needed. Easy `brew tap` or
+2. **Single static binary**, no Node/Ruby runtime needed. Easy `brew tap` or
    `cargo install` distribution.
-4. **Cooperate with existing auth**: read the same `~/.netrc` entry that
-   `aha-cli` writes, fall back to `AHA_TOKEN` / `AHA_COMPANY` env vars (so it
-   matches `aha-mcp`'s convention).
+3. **First-class auth flow**: `aha auth login` runs the full OAuth 2.0 + PKCE
+   browser flow ourselves. Falls back to `AHA_TOKEN` / `AHA_COMPANY` env vars
+   (matching `aha-mcp`'s convention) and reads the existing `~/.netrc` entry
+   from upstream `aha-cli` for interop.
 
-## Non-goals
+## Non-goals (v0.1)
 
 - Replacing `aha-mcp` — the MCP server stays as the LLM-facing surface.
-- Re-implementing the entire Aha! API. Scope = what humans browse, plus the
-  small set of writes already supported by `aha-mcp`.
+- Any write operation against the Aha! API. The CLI must be safe to run
+  freely; nothing it does mutates remote state. (The only writes anywhere
+  are local: `~/.netrc` updates from `auth login` / `auth logout`.)
 - A TUI. Plain stdout output, lean on the user's shell + `less` + `jq`.
+
+## Future (post-v0.1, not in scope yet)
+
+- Write paths: `features create`, `features comment`, `requirements comment`,
+  `todos create / update / done`. The MCP server already implements these and
+  the service layer we'll build can be extended to match in a couple of hours
+  once the team wants them.
 
 ## Reference points
 
@@ -93,11 +103,11 @@ aha-tc/
 │   └── cmd/
 │       ├── mod.rs
 │       ├── products.rs    # aha products list
-│       ├── features.rs    # aha features list/show/create/comment
+│       ├── features.rs    # aha features list/show
 │       ├── releases.rs    # aha releases list/show
 │       ├── epics.rs       # aha epics list/show
-│       ├── requirements.rs
-│       ├── todos.rs       # aha todos list/show/create/update/done
+│       ├── requirements.rs # aha requirements show
+│       ├── todos.rs       # aha todos list/show
 │       ├── ideas.rs       # aha ideas list/show
 │       ├── backlog.rs     # aha backlog [--release X] [--epic Y] — grouped feature view
 │       └── auth.rs        # aha auth check / aha auth login (delegates to aha-cli; or write our own OAuth flow later)
@@ -142,18 +152,11 @@ Commands:
                 [--assignee <email>] [--tag <tag>] [--status <status>]
                 [--updated-since <date>] [-q <query>]
   features show <REF>                 Deep view: feature + requirements + comments + todos
-  features create --product TC --name "..." [--description ...] [--tag ...]
-                  [--assignee <email>]
-  features comment <REF> --body "..."
 
   requirements show <REF>
-  requirements comment <REF> --body "..."
 
   todos list [--mine] [--feature TC-1109] [--status pending|completed]
   todos show <ID>
-  todos create --feature TC-1109 --name "..." --body "..." [--due 2026-05-20] [--assignee <email>]
-  todos update <ID> [--status completed] [--name ...] [--body ...] [--due ...]
-  todos done <ID>                     Sugar for `todos update <ID> --status completed`
 
   ideas list [--product TC] [--status <status>]
   ideas show <REF>
@@ -275,27 +278,22 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 - Table output for `products list`, `releases list`, `epics list`, `features list`.
 - `features show` deep fetch — port the bounded-concurrency fan-out from `aha-mcp`.
 
-### Phase 2 — write paths (~half day)
-- `features create`
-- `features comment` / `requirements comment`
-- `todos create` / `todos update` / `todos done`
-
-### Phase 3 — the killer feature: `backlog` (~half day)
+### Phase 2 — the killer feature: `backlog` (~half day)
 - Group features by `release → epic → status`.
 - Format: collapsible-ish (release header, epic sub-header, feature row).
 - Honor `--release` / `--epic` filters.
 - This is the view that justifies the tool existing at all.
 
-### Phase 4 — polish (~half day)
+### Phase 3 — polish (~half day)
 - `--json` / `--yaml` output paths through every command.
 - Markdown rendering for `features show` description (HTML → MD → terminal).
 - Shell completions (`clap_complete`).
 - `brew tap thoroughcare/tap` formula + GitHub release workflow that
   cross-compiles macOS arm64/x86_64 + linux x86_64.
 
-**Total estimate: ~2.5 dev days for a polished v0.1** (3 days if we go with
-OAuth flow option (b) and need to register the Aha! app + iterate on the
-flow).
+**Total estimate: ~2 dev days for a polished read-only v0.1** (2.5 days if we
+go with OAuth flow option (b) and need to register the Aha! app + iterate on
+the flow).
 
 ## Optional: codegen path
 

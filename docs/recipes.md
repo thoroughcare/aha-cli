@@ -33,18 +33,26 @@ included alongside its comments — none of which are returned by the
 list endpoint. Bounded at 3 concurrent requests to stay under Aha!'s
 ~5 req/sec rate limit.
 
-## Get the URL of a single attachment for hand-off to a browser
+## Download an attached file
+
+```sh
+aha attachments download <attachment-id>
+# Default: writes to <file_name> in cwd. Use -o <path> to choose a path,
+# or -o - to write the bytes to stdout.
+```
+
+Some attachments come back with HTTP 500 / `/access_denied` against the
+API token (reason undocumented — see README). When that happens, fall
+back to opening the URL in a logged-in browser tab:
 
 ```sh
 aha features show TC-1109 --json \
   | jq -r '.todos[].todo.attachments[] | select(.file_name == "diagram.png") | .download_url'
 ```
 
-Open the URL in a browser tab where you're logged into Aha! — that
-session cookie is what the download endpoint actually checks.
-`aha attachments download <id>` is wired up but currently runs into the
-same access_denied; see the README's "Attachment downloads — known
-limitation" section.
+The browser session cookie is what the download endpoint sometimes
+demands; pasting the URL into a tab where you're already logged into
+Aha! always works.
 
 ## Find every file or image attached to a feature
 

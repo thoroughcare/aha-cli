@@ -106,24 +106,29 @@ todos:
   [completed] Acceptance Criteria Review  [body; 1 comment(s)]
 ```
 
-### Attachment downloads — known limitation
+### Attachment downloads — works for some, blocked for others
 
 `aha attachments download <id>` is wired up end-to-end (CLI → metadata
 fetch → byte stream → file/stdout, with `-o`, `--force`, and TTY-aware
-output), but against the live `*.aha.io` API today the byte fetch fails
-because Aha! gates the `download_url` on a browser session cookie — the
-API token alone is rejected with `/access_denied`. The MCP server in
-`../aha-mcp` hits the same wall and exposes metadata only.
+output). Against the live `*.aha.io` API the byte fetch behaviour is
+**inconsistent**:
 
-What still works regardless:
+- Some attachments (e.g. comment images) download successfully via the
+  API-token-derived flow and write a valid file to disk.
+- Others (e.g. some todo PDFs) return HTTP 500 / `/access_denied` even
+  with the same bearer token and the freshly-issued `download_url`.
+
+The reason isn't documented — likely an attachment-level ACL, owner
+mismatch, or storage-tier difference. When a download is blocked the
+command exits non-zero with the Aha! error body intact, so it's safe to
+script around: try the download, fall back to opening the
+`download_url` in a logged-in browser tab on failure.
+
+What always works:
 - The `attachments[]` arrays on every comment and todo (in JSON / YAML
   output of `aha features show`) carry `download_url`, `file_name`,
-  `content_type`, `file_size`, and `id` — enough to either click through
-  in a logged-in browser or hand off to a tool that has session auth.
-
-The command stays in the CLI so the moment Aha! starts honoring the API
-token at the download path (or we discover an undocumented byte
-endpoint), it works without further changes.
+  `content_type`, `file_size`, and `id` — enough to click through in a
+  logged-in browser or hand off to another tool.
 
 ## Authentication
 

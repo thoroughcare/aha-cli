@@ -1,13 +1,11 @@
 //! `aha attachments download <id>` — fetch an attachment by id, stream
 //! the bytes to a file (default: `<file_name>` in CWD) or stdout.
 //!
-//! NOTE: live testing against `tcare.aha.io` shows that Aha!'s
-//! `download_url` requires a browser session cookie — the API token alone
-//! is rejected with `/access_denied`. The wiremock tests below confirm
-//! the command logic and round-trip against a server that *does* honor
-//! the request, so the command is ready when/if Aha! starts serving the
-//! download via the API token (or if Aha! adds a `/api/v1/.../download`
-//! byte endpoint). For now, against the real API it errors cleanly.
+//! Live behavior against `tcare.aha.io` is mixed: some attachments (e.g.
+//! comment images) download cleanly via the bearer-derived flow, others
+//! return HTTP 500 / `/access_denied` for reasons that aren't documented.
+//! On failure the Aha error body is bubbled up so the user can decide
+//! whether to retry, paste the `download_url` into a browser, or move on.
 
 use std::path::{Path, PathBuf};
 

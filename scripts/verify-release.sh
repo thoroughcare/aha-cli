@@ -307,7 +307,7 @@ check_with_output "ideas list returns JSON array" \
 # non-zero with a recognizable error from Aha!, and (c) the metadata
 # fields the user actually relies on are present in features-show JSON.
 
-section "attachments (limited: live download blocked by Aha! auth model)"
+section "attachments"
 
 check_with_output "attachments download --help is registered" \
   'grep -qE "Output path|--force"' \
@@ -327,12 +327,40 @@ if [[ -n "${RICH_FEATURE:-}" ]]; then
 fi
 
 if [[ -n "$ATT_ID" ]]; then
-  echo "    using attachment id: $ATT_ID (live download is expected to fail)"
-  # We expect non-zero with an Aha!-shaped error — succeeding here would
-  # actually be news worth investigating (auth may have changed).
-  check_with_output "live download exits non-zero with Aha-shaped error" \
-    'grep -qiE "(access[_ ]denied|record not found|HTTP 5)"' \
-    bash -c "! '$AHA' attachments download '$ATT_ID' -o /dev/null --force"
+  echo "    using attachment id: $ATT_ID"
+  # Live downloads work for some attachments and fail for others (reason
+  # unclear; some token-signed URLs hit /access_denied even with bearer).
+  # Either outcome is acceptable — what we assert is that the command
+  # never produces a misleading success: if exit is 0, bytes must have
+  # been written; if exit is non-zero, the error must be Aha-shaped, not
+  # a panic or our own bug.
+  TMPOUT=$(mktemp)
+  if "$AHA" attachments download "$ATT_ID" -o "$TMPOUT" --force >/dev/null 2>&1; then
+    if [[ -s "$TMPOUT" ]]; then
+      printf '  %s✓%s live download succeeded and wrote %d bytes\n' \
+        "$GREEN" "$RESET" "$(wc -c <"$TMPOUT")"
+      PASS=$((PASS + 1))
+    else
+      printf '  %s✗%s live download exited 0 but produced 0 bytes\n' \
+        "$RED" "$RESET"
+      FAIL=$((FAIL + 1))
+    fi
+  else
+    # Exited non-zero. Capture the error to confirm it's recognisably
+    # from Aha! (access_denied, 4xx, 5xx) and not a CLI internal failure.
+    ERR=$("$AHA" attachments download "$ATT_ID" -o "$TMPOUT" --force 2>&1 >/dev/null || true)
+    if echo "$ERR" | grep -qiE "(access[_ ]denied|record not found|HTTP [45])"; then
+      printf '  %s✓%s live download blocked by Aha! (recognised error)\n' \
+        "$GREEN" "$RESET"
+      PASS=$((PASS + 1))
+    else
+      printf '  %s✗%s live download failed with unrecognised error:\n' \
+        "$RED" "$RESET"
+      echo "$ERR" | sed 's/^/      /' | head -5
+      FAIL=$((FAIL + 1))
+    fi
+  fi
+  rm -f "$TMPOUT"
 else
   echo "    (skipped live attempt — no attachments visible on $RICH_FEATURE)"
 fi

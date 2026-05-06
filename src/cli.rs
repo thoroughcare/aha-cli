@@ -103,9 +103,9 @@ pub enum Command {
     #[command(subcommand)]
     Ideas(IdeasCommand),
 
-    /// Download attached files / images. (Note: Aha!'s download URL
-    /// currently requires a browser session — the API token gets
-    /// /access_denied. Command is wired up; awaits Aha! API support.)
+    /// Download attached files / images. Some attachments succeed via
+    /// the API token; others return HTTP 500 / `/access_denied` (reason
+    /// undocumented). Falls back to a recognisable error on failure.
     #[command(subcommand)]
     Attachments(AttachmentsCommand),
 

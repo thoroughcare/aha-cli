@@ -105,6 +105,16 @@ pub enum Command {
 
     /// Show the backlog grouped by release → epic → status.
     Backlog(BacklogArgs),
+
+    /// Print a shell completion script.
+    Completions(CompletionsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CompletionsArgs {
+    /// Shell to emit completions for.
+    #[arg(value_enum)]
+    pub shell: clap_complete::Shell,
 }
 
 #[derive(Debug, Args)]
@@ -275,6 +285,7 @@ pub async fn run() -> ExitCode {
         Command::Todos(c) => dispatch_todos(&cli, c).await,
         Command::Ideas(c) => dispatch_ideas(&cli, c).await,
         Command::Backlog(args) => dispatch_backlog(&cli, args).await,
+        Command::Completions(args) => emit_completions(args),
     };
 
     match result {
@@ -505,6 +516,14 @@ async fn dispatch_ideas(cli: &Cli, command: &IdeasCommand) -> Result<()> {
         }
         IdeasCommand::Show { id } => cmd::ideas::show(&client, id, cli.resolved_format()).await,
     }
+}
+
+fn emit_completions(args: &CompletionsArgs) -> Result<()> {
+    use clap::CommandFactory;
+    let mut cmd = Cli::command();
+    let bin_name = cmd.get_name().to_string();
+    clap_complete::generate(args.shell, &mut cmd, bin_name, &mut std::io::stdout());
+    Ok(())
 }
 
 fn read_token_from_stdin() -> Result<String> {

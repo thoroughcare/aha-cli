@@ -22,6 +22,26 @@ fn version_flag_prints_version() {
 }
 
 #[test]
+fn completions_zsh_emits_compdef() {
+    Command::cargo_bin("aha")
+        .unwrap()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("#compdef aha"));
+}
+
+#[test]
+fn completions_bash_emits_function() {
+    Command::cargo_bin("aha")
+        .unwrap()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("_aha"));
+}
+
+#[test]
 fn auth_help_lists_subcommands() {
     Command::cargo_bin("aha")
         .unwrap()

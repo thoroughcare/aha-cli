@@ -1,4 +1,4 @@
-# aha-tc — Implementation Plan
+# aha-cli — Implementation Plan
 
 A Rust CLI for browsing the Thoroughcare Aha! workspace from the terminal.
 Drop-in successor to the unhelpful upstream `aha-cli` (which only exists for
@@ -11,7 +11,8 @@ comments, create/update todos) are deliberately deferred — see "Future" below.
 ## Goals (v0.1)
 
 1. **Browse** products, releases, epics, features, requirements, todos, ideas
-   from the terminal — table view by default, `--json` for piping.
+   from the terminal — table view when stdout is a TTY, JSON when piped or
+   run by an automation/AI (mirrors `gh`).
 2. **Single static binary**, no Node/Ruby runtime needed. Easy `brew tap` or
    `cargo install` distribution.
 3. **First-class auth flow**: `aha auth login` runs the full OAuth 2.0 + PKCE
@@ -76,7 +77,7 @@ No optional async-std, no `tokio::main` macro magic past the entry point.
 ## Repo layout
 
 ```
-aha-tc/
+aha-cli/
 ├── Cargo.toml          # workspace root; bin + lib in same crate
 ├── README.md
 ├── PLAN.md             # this file
@@ -125,8 +126,9 @@ aha [global flags] <command> [subcommand] [flags]
 Global flags:
   --subdomain <name>   Override AHA_COMPANY / netrc subdomain
   --token <token>      Override AHA_TOKEN / netrc token (rarely needed)
-  --json               Emit JSON instead of tables
-  --yaml               Emit YAML instead of tables
+  --json               Force JSON output (default when stdout is not a TTY)
+  --no-json            Force human-readable tables (default when stdout is a TTY)
+  --yaml               Force YAML output
   -v, --verbose        Increase log level (-v info, -vv debug, -vvv trace)
   --no-color           Disable color output (also honors NO_COLOR env)
 
@@ -176,7 +178,7 @@ Priority order — first hit wins:
 1. CLI flags (`--token`, `--subdomain`)
 2. Env: `AHA_TOKEN`, `AHA_COMPANY` (matches `aha-mcp` convention)
 3. `~/.netrc` entry, in two flavors:
-   - **`aha-tc`-native format** (what we write): standard
+   - **`aha-cli`-native format** (what we write): standard
      `machine <subdomain>.aha.io login oauth password <token>`. Any tool that
      speaks netrc will see a usable Bearer-shaped credential.
    - **Upstream `aha-cli` format** (interop): the npm CLI writes
@@ -200,7 +202,7 @@ Mirrors the flow upstream `aha-cli` uses, and `gh auth login --web`,
 4. CLI opens the browser to:
    ```
    https://secure.aha.io/oauth/authorize?
-     client_id=<aha-tc client id>&
+     client_id=<aha-cli client id>&
      redirect_uri=http://127.0.0.1:<port>/callback&
      response_type=code&
      code_challenge=<challenge>&
@@ -227,7 +229,7 @@ registered OAuth app (`client_id`). Three options:
 - (a) **Reuse `aha-cli`'s `client_id`.** The upstream package is open source on
   npm; the ID is plain text. Functional but feels off — we'd be shipping
   someone else's app identifier.
-- (b) **Register a `aha-tc` OAuth app under the ThoroughCare Aha! account.**
+- (b) **Register a `aha-cli` OAuth app under the ThoroughCare Aha! account.**
   Cleanest. Bake the `client_id` into the binary, no `client_secret` because
   PKCE makes the public-client model safe. ~5 minutes of setup in the Aha!
   admin UI (`/settings/account/integrations`).
@@ -254,7 +256,7 @@ verifies it with a `GET /api/v1/me`, writes `.netrc`. ~20 LOC.
 ## Implementation phases
 
 ### Phase 0 — scaffolding (~1 hour)
-- `cargo new --bin aha-tc` (already created the dir; just add `Cargo.toml`).
+- `cargo new --bin aha-cli` (already created the dir; just add `Cargo.toml`).
 - `clap` skeleton with `aha auth check` as the only working command.
 - CI workflow (`fmt + clippy + test`).
 
@@ -307,16 +309,29 @@ expands.
 
 ## Open questions for the team
 
-1. **Repo location** — keep this as a standalone repo under
-   `github.com/thoroughcare/aha-tc`, or fold it into `aha-mcp` as a sibling
-   crate (Rust workspace) and share nothing? They share zero code (different
-   languages), so probably standalone.
-2. **Distribution** — `brew tap` only, or also publish to `crates.io`?
-3. **Output defaults** — table-by-default is friendly for humans, but is
-   anyone going to pipe heavily to `jq`? If yes, default to JSON when stdout
-   is not a TTY (a la `gh`).
-4. **Naming** — `aha-tc` clashes with nothing but is uninspired. Options:
-   `tcaha`, `tcare-aha`, just `aha` (collides with the ANSI→HTML brew tool).
+1. **Distribution** — `brew tap thoroughcare/tap` only, or also publish to
+   `crates.io`?
+2. **OAuth client registration** (blocks `auth login`) — option (a) reuse
+   upstream `aha-cli`'s `client_id`, (b) register a fresh `aha-cli` OAuth app
+   under the ThoroughCare Aha! account, or (c) skip OAuth entirely and only
+   support `--with-token`. Recommendation: (b).
+
+## Decisions
+
+- **Repo / binary name** — `aha-cli`. Yes, it collides with the upstream npm
+  package of the same name (the extension-dev tool), but inside our org this
+  is "the Aha! CLI", and the binary it installs is plain `aha`. Hosted at
+  `github.com/thoroughcare/aha-cli`.
+- **Output mode** — mirror `gh`: detect TTY on stdout. When stdout is a TTY,
+  default to human-readable tables / kv-views with color. When stdout is NOT
+  a TTY (piped to a file, another command, or — pertinently — captured by an
+  AI agent's exec sandbox), default to JSON. `--json` / `--no-json` override
+  the auto-detection. `NO_COLOR` and `--no-color` suppress ANSI in the
+  human path. This means an LLM running `aha features list` over a shell
+  tool gets clean structured output for free, while a human at the prompt
+  gets a table. Implementation: `std::io::IsTerminal::is_terminal(&io::stdout())`
+  picks the default; the rest of the codebase only sees a resolved
+  `OutputFormat` enum.
 
 ## Risks
 
@@ -324,9 +339,18 @@ expands.
   `i64`. Add a clippy lint or a test that round-trips a known 19-digit ID.
 - **Rate limits** — 5 req/sec is tight for the deep `features show`. Keep the
   bounded-concurrency cap from `aha-mcp` (3 in-flight).
-- **OpenAPI drift** — if Aha! rotates fields, hand-written models break
-  silently on serialization. `serde(default)` + `#[serde(other)]` catch-alls
-  on enums minimize surprise.
+- **API drift within v1** — the Aha! API is versioned in the URL (`/api/v1/`).
+  Breaking changes would land in `v2`, not surprise us inside `v1`. The
+  realistic in-version drift is additive: new fields appear on responses, or
+  enum variants get added. Mitigations:
+  - `serde` ignores unknown fields by default — deliberately do **not** use
+    `#[serde(deny_unknown_fields)]` on response structs.
+  - `#[serde(default)]` on every optional field so missing fields parse cleanly.
+  - `#[serde(other)]` catch-all on every enum we deserialize from API strings
+    (workflow status, etc.), so a new status doesn't crash us — we surface
+    it as `Unknown(String)` and keep moving.
+  - Pin the URL prefix to `/api/v1/` in one place (`AhaClient::base_url`); if
+    we ever migrate to v2, it's one edit.
 - **Auth coupling to upstream `aha-cli`** — if we read `.netrc` written by it,
   changes in their format would break us. Document the format we expect, fall
   back to env vars cleanly.

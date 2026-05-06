@@ -102,6 +102,25 @@ pub enum Command {
     /// Browse ideas.
     #[command(subcommand)]
     Ideas(IdeasCommand),
+
+    /// Show the backlog grouped by release → epic → status.
+    Backlog(BacklogArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct BacklogArgs {
+    #[arg(long)]
+    pub product: Option<String>,
+    #[arg(long)]
+    pub release: Option<String>,
+    #[arg(long)]
+    pub epic: Option<String>,
+    /// Filter by tag.
+    #[arg(long)]
+    pub tag: Option<String>,
+    /// Filter by assignee email.
+    #[arg(long = "assignee")]
+    pub assigned_to_user: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -255,6 +274,7 @@ pub async fn run() -> ExitCode {
         Command::Requirements(c) => dispatch_requirements(&cli, c).await,
         Command::Todos(c) => dispatch_todos(&cli, c).await,
         Command::Ideas(c) => dispatch_ideas(&cli, c).await,
+        Command::Backlog(args) => dispatch_backlog(&cli, args).await,
     };
 
     match result {
@@ -461,6 +481,20 @@ async fn dispatch_todos(cli: &Cli, command: &TodosCommand) -> Result<()> {
         }
         TodosCommand::Show { id } => cmd::todos::show(&client, id, cli.resolved_format()).await,
     }
+}
+
+async fn dispatch_backlog(cli: &Cli, args: &BacklogArgs) -> Result<()> {
+    let client = build_client(cli).await?;
+    let filters = FeatureFilters {
+        product: args.product.clone(),
+        release: args.release.clone(),
+        epic: args.epic.clone(),
+        query: None,
+        tag: args.tag.clone(),
+        assigned_to_user: args.assigned_to_user.clone(),
+        updated_since: None,
+    };
+    cmd::backlog::run(&client, filters, cli.resolved_format()).await
 }
 
 async fn dispatch_ideas(cli: &Cli, command: &IdeasCommand) -> Result<()> {

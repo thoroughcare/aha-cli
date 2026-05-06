@@ -1,3 +1,4 @@
+pub mod backlog;
 pub mod epics;
 pub mod features;
 pub mod ideas;

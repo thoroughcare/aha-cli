@@ -29,6 +29,12 @@ impl AhaClient {
         resp.json().await.with_context(|| format!("decoding {url}"))
     }
 
+    /// Public-API variant of `get_json` for examples / probes that want
+    /// raw JSON without going through our typed model.
+    pub async fn get_json_raw(&self, path: &str) -> Result<serde_json::Value> {
+        self.get_json(path).await
+    }
+
     pub(super) async fn send_with_retry(&self, builder: RequestBuilder) -> Result<Response> {
         let request = builder.build().context("building request")?;
         for attempt in 0..=MAX_RETRIES {

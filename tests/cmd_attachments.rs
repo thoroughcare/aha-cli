@@ -182,10 +182,9 @@ async fn download_overwrites_with_force() {
 }
 
 #[tokio::test]
-async fn download_surfaces_gated_attachment_clearly() {
-    // Aha! 302s gated attachments to /access_denied; without disabling
-    // redirects we either chase to a 500 page or loop infinitely with
-    // bearer. The download client must catch the 302 itself and report it.
+async fn download_fast_fails_on_tombstoned_attachment() {
+    // `file_size: null` is Aha!'s tombstone for purged blobs. We catch
+    // it before issuing the download request and explain what happened.
     let home = tempfile::tempdir().unwrap();
     write_creds(home.path());
     let cwd = tempfile::tempdir().unwrap();
@@ -197,20 +196,60 @@ async fn download_surfaces_gated_attachment_clearly() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "attachment": {
                 "id": "att123",
-                "file_name": "secret.pdf",
+                "file_name": "purged.pdf",
                 "download_url": download_url,
                 "content_type": "application/pdf",
-                "file_size": null
+                "file_size": null,
+                "original_file_size": null
+            }
+        })))
+        .mount(&api)
+        .await;
+    // No /files/att123/blob mock — the test fails if we even hit it.
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", api.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["attachments", "download", "att123"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("tombstoned"))
+        .stderr(predicate::str::contains("purged"))
+        .stderr(predicate::str::contains("purged.pdf"));
+
+    assert!(!cwd.path().join("purged.pdf").exists());
+}
+
+#[tokio::test]
+async fn download_surfaces_unexpected_redirect_with_file_size_set() {
+    // Outside the tombstoned pattern: file_size is set but Aha! still
+    // 302s. Surface the redirect verbatim so the user has a breadcrumb.
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let cwd = tempfile::tempdir().unwrap();
+
+    let api = MockServer::start().await;
+    let download_url = format!("{}/files/att123/blob", api.uri());
+    Mock::given(method("GET"))
+        .and(path("/attachments/att123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "attachment": {
+                "id": "att123",
+                "file_name": "weird.pdf",
+                "download_url": download_url,
+                "content_type": "application/pdf",
+                "file_size": 9001
             }
         })))
         .mount(&api)
         .await;
     Mock::given(method("GET"))
         .and(path("/files/att123/blob"))
-        .respond_with(
-            ResponseTemplate::new(302)
-                .insert_header("location", "/attachments/att123/access_denied"),
-        )
+        .respond_with(ResponseTemplate::new(302).insert_header("location", "/somewhere/else"))
         .mount(&api)
         .await;
 
@@ -224,11 +263,10 @@ async fn download_surfaces_gated_attachment_clearly() {
         .args(["attachments", "download", "att123"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("gated by Aha!"))
-        .stderr(predicate::str::contains("access_denied"));
+        .stderr(predicate::str::contains("Unexpected"))
+        .stderr(predicate::str::contains("/somewhere/else"));
 
-    // No file written.
-    assert!(!cwd.path().join("secret.pdf").exists());
+    assert!(!cwd.path().join("weird.pdf").exists());
 }
 
 #[tokio::test]

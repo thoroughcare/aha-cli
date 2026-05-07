@@ -59,21 +59,25 @@ aha attachments download <attachment-id>
 # or -o - to write the bytes to stdout.
 ```
 
-Two outcomes, depending on the attachment's ACL on Aha!'s side:
+Two outcomes:
 
-- **Success**: the file is written and a confirmation line is printed
-  (or, when piped, a JSON metadata object on stdout while the bytes go
-  to disk).
-- **Gated**: the command exits non-zero and prints the URL to open in
-  a logged-in browser tab. No 0-byte file left behind.
+- **Bytes returned**: the file is written and a confirmation line is
+  printed (or, when piped, a JSON metadata object on stdout while the
+  bytes go to disk).
+- **Tombstoned**: Aha! still serves the metadata but `file_size` is
+  null — the underlying blob has been purged from their storage. The
+  command exits non-zero with a clear diagnosis. No partial file on
+  disk. The bytes are unrecoverable from the API; if you really need
+  the file, ask Aha! support whether they can restore it from backup.
 
-When you hit the gated case, the URL fallback always works:
+You can spot tombstoned attachments before trying to download:
 
 ```sh
 aha features show TC-1109 --json \
-  | jq -r '.todos[].todo.attachments[]
-           | select(.file_name == "diagram.png") | .download_url'
-# paste the URL into a browser where you're logged into Aha!
+  | jq '[.todos[].todo.attachments[]?,
+         .comments[]?.attachments[]?,
+         .todos[]?.comments[]?.attachments[]?]
+        | map(select(.file_size == null))'
 ```
 
 ## Find every file or image attached to a feature

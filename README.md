@@ -106,35 +106,45 @@ todos:
   [completed] Acceptance Criteria Review  [body; 1 comment(s)]
 ```
 
-### Attachment downloads — two regimes
+### Attachment downloads
 
-Aha! exposes `download_url`s in two flavours, both with the same shape
-(`/attachments/<id>/token/<sig>.download`):
+`aha attachments download <id>` works for **every attachment whose blob
+is still in Aha!'s storage** — confirmed live on TC-16 / TC-18 images.
+Streams into a sibling tempfile and renames on success, so a failure
+never leaves a 0-byte stub or wipes a `--force` target.
 
-- **Public-by-signature**: anyone with the URL gets a 200 + bytes. Most
-  comment images land here. `aha attachments download <id>` works.
-- **Browser-session-gated**: signed URL 302s to `/access_denied` for
-  anyone who isn't logged in via the web UI — including API-token
-  callers. Some todo PDFs land here.
+What about the failures? After probing it carefully (see
+`examples/probe_attachment.rs`), all the broken cases we've seen share
+one fingerprint in the metadata:
 
-When the gated case fires we detect the 302 (we disable redirect
-following on the download client so we don't loop or chase into an
-opaque 500), exit non-zero, and print:
-
-```
-error: attachment <id> is gated by Aha! browser-session ACL —
-the signed download_url isn't usable with the API token.
-Open this URL in a logged-in browser tab instead:
-  https://<subdomain>.aha.io/attachments/<id>/token/<sig>.download
+```jsonc
+{ "file_size": null, "original_file_size": null }
 ```
 
-No partial / 0-byte file is left behind on failure (we stream into a
-sibling tempfile and rename only on success).
+When both size fields are null, **Aha! itself no longer has the bytes**
+— the metadata pointer survives in the API but the underlying file has
+been purged from their storage. Every URL variant (no `?size=`,
+`?size=large`, `?size=medium`, `?size=thumbnail`) returns 302 →
+`/access_denied` → "Record not found (500)" for both API tokens *and*
+logged-in browser sessions. There is no auth path that recovers them
+from the API.
 
-The metadata (`download_url`, `file_name`, `content_type`, `file_size`,
-`id`) is always available regardless via `aha features show <ref>` or
-`aha todos show <id>` — pipe it to `jq` to drive scripts, or paste the
-URL into a logged-in browser tab to fetch a gated attachment by hand.
+We catch this case **before issuing the download** and report it
+clearly:
+
+```
+error: attachment <id> (<file_name>) is tombstoned: Aha! still serves
+the metadata pointer but reports `file_size: null` and
+`original_file_size: null`, which has consistently meant the blob has
+been purged from their storage. The bytes are unrecoverable through any
+URL we've tested (API token, browser session, every `?size=` variant —
+all 302 to /access_denied). Aha! support may be able to restore from
+backup if the file is critical; we can't fetch it from here.
+```
+
+If you hit a non-tombstoned attachment that still fails (file_size is
+set but the URL 302s anyway — outside the pattern we've observed),
+please report the attachment id; we'll widen the diagnostic.
 
 ## Authentication
 

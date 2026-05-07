@@ -328,30 +328,46 @@ impl AhaClient {
     /// `writer`. Returns the (refreshed) metadata so callers can name the
     /// output file.
     ///
-    /// Two observed Aha! download regimes (both via the same URL shape):
-    /// - **Public-by-signature**: the signed `download_url` returns 200 to
-    ///   anyone who has it; no auth header needed. Most comment images
-    ///   land here.
-    /// - **Browser-session-gated**: the signed URL returns 302 →
-    ///   `/access_denied` (no auth) or infinite-redirects (with bearer).
-    ///   API tokens can't unlock these. Some todo attachments land here.
+    /// What we've seen empirically: API tokens can download every
+    /// attachment whose `file_size` is set in the metadata. Attachments
+    /// where the API returns `file_size: null` come back as 302 →
+    /// `/access_denied` → 500 — both for the API and for a logged-in
+    /// browser session. The blob appears to be deleted from Aha!'s
+    /// storage even though the metadata pointer survives.
     ///
-    /// We use a fresh, unauthenticated client with redirects disabled so
-    /// we can detect the gated case as a clean 302 instead of looping or
-    /// chasing the URL into an opaque 500. Any redirect away from the
-    /// download host is reported as `gated by Aha! browser-session ACL`.
+    /// We use a fresh client with redirects disabled so we can detect
+    /// the missing-blob case as a clean 302 instead of chasing the URL
+    /// into an opaque 500.
     pub async fn download_attachment<W>(&self, id: &str, writer: &mut W) -> Result<Attachment>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
         use tokio::io::AsyncWriteExt;
         let meta = self.get_attachment(id).await?;
+
+        // Fast-fail before we touch the wire. `file_size: null` on an
+        // attachment record reliably means Aha! has the metadata but no
+        // longer has the blob — every URL variant 302s to /access_denied
+        // for both API tokens and logged-in browser sessions. Telling the
+        // user upfront beats a confusing redirect chain.
+        if meta.file_size.is_none() {
+            anyhow::bail!(
+                "attachment {id} ({}) is tombstoned: Aha! still serves the \
+                 metadata pointer but reports `file_size: null` and \
+                 `original_file_size: null`, which has consistently meant the \
+                 blob has been purged from their storage. The bytes are \
+                 unrecoverable through any URL we've tested (API token, \
+                 browser session, every `?size=` variant — all 302 to \
+                 /access_denied). Aha! support may be able to restore from \
+                 backup if the file is critical; we can't fetch it from here.",
+                meta.file_name,
+            );
+        }
+
         let url = meta
             .download_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("attachment {id} has no download_url"))?;
-        // Build a one-shot client with redirects disabled so we can spot
-        // the gated case before we start streaming garbage.
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -363,18 +379,20 @@ impl AhaClient {
             .with_context(|| format!("GET {url}"))?;
         let status = resp.status();
         if status.is_redirection() {
-            // Aha!'s gated path 302s to /access_denied (or to itself in a
-            // loop with bearer). The location is a useful breadcrumb.
+            // file_size was non-null but the URL still redirected — outside
+            // the tombstoned pattern we've seen. Surface the redirect
+            // verbatim so the user can see what Aha! is doing.
             let location = resp
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("(no location header)");
             anyhow::bail!(
-                "attachment {id} is gated by Aha! browser-session ACL — \
-                 the signed download_url isn't usable with the API token. \
-                 Open this URL in a logged-in browser tab instead:\n  {url}\n\
-                 (server redirected to: {location})"
+                "attachment {id}: signed download_url returned {status} → \
+                 {location}. (Unexpected: file_size was set on the metadata, \
+                 so we'd expect this to download. Try opening the URL in a \
+                 logged-in Aha! browser tab; if that also fails, please \
+                 report the attachment id.)\nURL: {url}"
             );
         }
         if !status.is_success() {

@@ -272,6 +272,26 @@ impl AhaClient {
             .ok_or_else(|| anyhow::anyhow!("todo {id} not found"))
     }
 
+    /// Deep view: full todo (body + attachments via per-task GET) plus its
+    /// comments (each with its own attachments). Same parallel-pair as
+    /// the per-todo branch of `feature_show`, exposed standalone so users
+    /// can drill into a todo without going through its parent feature.
+    pub async fn todo_show(&self, id: &str) -> Result<TodoDeep> {
+        let task_path = format!("/tasks/{id}");
+        let comments_path = format!("/tasks/{id}/comments");
+        let (full, comments_resp) = tokio::join!(
+            self.get_json::<OneEnvelope<Todo>>(&task_path),
+            self.get_json::<ListEnvelope<Comment>>(&comments_path),
+        );
+        let todo = full?
+            .task
+            .ok_or_else(|| anyhow::anyhow!("todo {id} not found"))?;
+        let comments = comments_resp
+            .map(|e| e.into_items(ListKey::Comments))
+            .unwrap_or_default();
+        Ok(TodoDeep { todo, comments })
+    }
+
     // ---------- Ideas ----------
 
     pub async fn list_ideas(&self, product_filter: Option<&str>) -> Result<Vec<Idea>> {
@@ -307,6 +327,19 @@ impl AhaClient {
     /// Resolve the attachment, then stream bytes from `download_url` into
     /// `writer`. Returns the (refreshed) metadata so callers can name the
     /// output file.
+    ///
+    /// Two observed Aha! download regimes (both via the same URL shape):
+    /// - **Public-by-signature**: the signed `download_url` returns 200 to
+    ///   anyone who has it; no auth header needed. Most comment images
+    ///   land here.
+    /// - **Browser-session-gated**: the signed URL returns 302 →
+    ///   `/access_denied` (no auth) or infinite-redirects (with bearer).
+    ///   API tokens can't unlock these. Some todo attachments land here.
+    ///
+    /// We use a fresh, unauthenticated client with redirects disabled so
+    /// we can detect the gated case as a clean 302 instead of looping or
+    /// chasing the URL into an opaque 500. Any redirect away from the
+    /// download host is reported as `gated by Aha! browser-session ACL`.
     pub async fn download_attachment<W>(&self, id: &str, writer: &mut W) -> Result<Attachment>
     where
         W: tokio::io::AsyncWrite + Unpin,
@@ -317,17 +350,33 @@ impl AhaClient {
             .download_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("attachment {id} has no download_url"))?;
-        // Use a fresh client without our default Authorization header — the
-        // download_url is typically a presigned S3 URL, and adding an
-        // Authorization header to a presigned request makes S3 reject it.
-        // If Aha! ever serves a non-presigned URL that requires bearer, we
-        // can detect the host and switch.
-        let resp = reqwest::Client::new()
+        // Build a one-shot client with redirects disabled so we can spot
+        // the gated case before we start streaming garbage.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .context("building download client")?;
+        let resp = client
             .get(url)
             .send()
             .await
             .with_context(|| format!("GET {url}"))?;
         let status = resp.status();
+        if status.is_redirection() {
+            // Aha!'s gated path 302s to /access_denied (or to itself in a
+            // loop with bearer). The location is a useful breadcrumb.
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("(no location header)");
+            anyhow::bail!(
+                "attachment {id} is gated by Aha! browser-session ACL — \
+                 the signed download_url isn't usable with the API token. \
+                 Open this URL in a logged-in browser tab instead:\n  {url}\n\
+                 (server redirected to: {location})"
+            );
+        }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("downloading attachment {id}: HTTP {status}: {body}");

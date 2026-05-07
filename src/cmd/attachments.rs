@@ -72,12 +72,28 @@ async fn write_to_path(
             path.display()
         );
     }
-    let mut file = tokio::fs::File::create(path)
+    // Write to a sibling tempfile and rename on success. Avoids two ways
+    // to corrupt the target on failure: (a) a 0-byte stub for new files,
+    // (b) wiping an existing file that --force would otherwise overwrite.
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = tempfile::NamedTempFile::new_in(parent)
+        .with_context(|| format!("creating temp file in {}", parent.display()))?;
+    let tmp_path = tmp.path().to_path_buf();
+    let mut file = tokio::fs::File::create(&tmp_path)
         .await
-        .with_context(|| format!("creating {}", path.display()))?;
-    let meta = client.download_attachment(id, &mut file).await?;
+        .with_context(|| format!("opening {}", tmp_path.display()))?;
+    let result = client.download_attachment(id, &mut file).await;
     file.flush().await.ok();
     drop(file);
+    let meta = match result {
+        Ok(meta) => meta,
+        Err(e) => {
+            // tmp drops here, removing the partial.
+            return Err(e);
+        }
+    };
+    tmp.persist(path)
+        .map_err(|e| anyhow::anyhow!("renaming download into place: {e}"))?;
 
     match format {
         OutputFormat::Table => {

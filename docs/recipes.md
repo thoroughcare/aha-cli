@@ -33,6 +33,24 @@ included alongside its comments — none of which are returned by the
 list endpoint. Bounded at 3 concurrent requests to stay under Aha!'s
 ~5 req/sec rate limit.
 
+## Drill into one todo's attachments and comments
+
+```sh
+aha todos show <todo-id>
+```
+
+Same fan-out as `features show` but scoped to a single todo: returns
+the full task (body + attachments) plus all its comments (each with
+their own attachments). Use this when you found a todo via
+`features show` and want to focus on it.
+
+To find a todo id from a feature's deep view:
+
+```sh
+aha features show TC-18 --json \
+  | jq -r '.todos[] | select(.todo.name | test("Clinical Input")) | .todo.id'
+```
+
 ## Download an attached file
 
 ```sh
@@ -41,18 +59,22 @@ aha attachments download <attachment-id>
 # or -o - to write the bytes to stdout.
 ```
 
-Some attachments come back with HTTP 500 / `/access_denied` against the
-API token (reason undocumented — see README). When that happens, fall
-back to opening the URL in a logged-in browser tab:
+Two outcomes, depending on the attachment's ACL on Aha!'s side:
+
+- **Success**: the file is written and a confirmation line is printed
+  (or, when piped, a JSON metadata object on stdout while the bytes go
+  to disk).
+- **Gated**: the command exits non-zero and prints the URL to open in
+  a logged-in browser tab. No 0-byte file left behind.
+
+When you hit the gated case, the URL fallback always works:
 
 ```sh
 aha features show TC-1109 --json \
-  | jq -r '.todos[].todo.attachments[] | select(.file_name == "diagram.png") | .download_url'
+  | jq -r '.todos[].todo.attachments[]
+           | select(.file_name == "diagram.png") | .download_url'
+# paste the URL into a browser where you're logged into Aha!
 ```
-
-The browser session cookie is what the download endpoint sometimes
-demands; pasting the URL into a tab where you're already logged into
-Aha! always works.
 
 ## Find every file or image attached to a feature
 

@@ -48,7 +48,7 @@ account; for now `--with-token` is the supported path.
 | `aha features show <ref>`       | Deep view: feature + requirements + comments + todos (with bodies and attachments). |
 | `aha requirements show <ref>`   | Show one requirement. |
 | `aha todos list [--feature]`    | List todos. |
-| `aha todos show <id>`           | Show one todo. |
+| `aha todos show <id>`           | Show one todo with body, attachments, and comments (each with their own attachments). |
 | `aha ideas list [--product]`    | List ideas. |
 | `aha ideas show <ref>`          | Show one idea. |
 | `aha backlog [filters]`         | Features grouped by release → epic. |
@@ -106,29 +106,35 @@ todos:
   [completed] Acceptance Criteria Review  [body; 1 comment(s)]
 ```
 
-### Attachment downloads — works for some, blocked for others
+### Attachment downloads — two regimes
 
-`aha attachments download <id>` is wired up end-to-end (CLI → metadata
-fetch → byte stream → file/stdout, with `-o`, `--force`, and TTY-aware
-output). Against the live `*.aha.io` API the byte fetch behaviour is
-**inconsistent**:
+Aha! exposes `download_url`s in two flavours, both with the same shape
+(`/attachments/<id>/token/<sig>.download`):
 
-- Some attachments (e.g. comment images) download successfully via the
-  API-token-derived flow and write a valid file to disk.
-- Others (e.g. some todo PDFs) return HTTP 500 / `/access_denied` even
-  with the same bearer token and the freshly-issued `download_url`.
+- **Public-by-signature**: anyone with the URL gets a 200 + bytes. Most
+  comment images land here. `aha attachments download <id>` works.
+- **Browser-session-gated**: signed URL 302s to `/access_denied` for
+  anyone who isn't logged in via the web UI — including API-token
+  callers. Some todo PDFs land here.
 
-The reason isn't documented — likely an attachment-level ACL, owner
-mismatch, or storage-tier difference. When a download is blocked the
-command exits non-zero with the Aha! error body intact, so it's safe to
-script around: try the download, fall back to opening the
-`download_url` in a logged-in browser tab on failure.
+When the gated case fires we detect the 302 (we disable redirect
+following on the download client so we don't loop or chase into an
+opaque 500), exit non-zero, and print:
 
-What always works:
-- The `attachments[]` arrays on every comment and todo (in JSON / YAML
-  output of `aha features show`) carry `download_url`, `file_name`,
-  `content_type`, `file_size`, and `id` — enough to click through in a
-  logged-in browser or hand off to another tool.
+```
+error: attachment <id> is gated by Aha! browser-session ACL —
+the signed download_url isn't usable with the API token.
+Open this URL in a logged-in browser tab instead:
+  https://<subdomain>.aha.io/attachments/<id>/token/<sig>.download
+```
+
+No partial / 0-byte file is left behind on failure (we stream into a
+sibling tempfile and rename only on success).
+
+The metadata (`download_url`, `file_name`, `content_type`, `file_size`,
+`id`) is always available regardless via `aha features show <ref>` or
+`aha todos show <id>` — pipe it to `jq` to drive scripts, or paste the
+URL into a logged-in browser tab to fetch a gated attachment by hand.
 
 ## Authentication
 

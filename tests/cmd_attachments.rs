@@ -182,6 +182,56 @@ async fn download_overwrites_with_force() {
 }
 
 #[tokio::test]
+async fn download_surfaces_gated_attachment_clearly() {
+    // Aha! 302s gated attachments to /access_denied; without disabling
+    // redirects we either chase to a 500 page or loop infinitely with
+    // bearer. The download client must catch the 302 itself and report it.
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let cwd = tempfile::tempdir().unwrap();
+
+    let api = MockServer::start().await;
+    let download_url = format!("{}/files/att123/blob", api.uri());
+    Mock::given(method("GET"))
+        .and(path("/attachments/att123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "attachment": {
+                "id": "att123",
+                "file_name": "secret.pdf",
+                "download_url": download_url,
+                "content_type": "application/pdf",
+                "file_size": null
+            }
+        })))
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/files/att123/blob"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", "/attachments/att123/access_denied"),
+        )
+        .mount(&api)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", api.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["attachments", "download", "att123"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("gated by Aha!"))
+        .stderr(predicate::str::contains("access_denied"));
+
+    // No file written.
+    assert!(!cwd.path().join("secret.pdf").exists());
+}
+
+#[tokio::test]
 async fn download_metadata_to_json_when_piped() {
     let home = tempfile::tempdir().unwrap();
     write_creds(home.path());

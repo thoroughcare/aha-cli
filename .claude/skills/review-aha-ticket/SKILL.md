@@ -8,8 +8,8 @@ description: |
   TRIGGER when: user asks to review a tcare Aha ticket, "look at TC-1234", "what does
   TC-1234 say", pastes a `tcare.aha.io/develop/features/...` URL, or types
   /review-aha-ticket [TICKET-ID].
-  SKIP when: user is asking to *start* implementation (use start-ticket), respond to
-  QE feedback (use failed-qe), or create a new ticket (use create-ticket).
+  SKIP when: the user wants to *act on* the ticket (start implementation, edit, comment,
+  create a new one) rather than read it — this skill is read-only summary only.
 ---
 
 # Review Aha Ticket
@@ -122,11 +122,6 @@ Present back to the user, in this order:
 7. **Open questions / risks** — based on the above, what is ambiguous, missing, or
    risky from an implementation standpoint?
 
-End with a short pointer to next-step skills:
-- `/start-ticket <ID>` — begin implementation
-- `/failed-qe <ID>` — respond to QE feedback
-- `/test-manually` — set up manual QA data
-
 ---
 
 ## Reminders
@@ -137,7 +132,7 @@ End with a short pointer to next-step skills:
 - Never echo `AHA_TOKEN`, `--token` values, the contents of `~/.netrc`, or any
   line of `.env` back to the user or to logs.
 - Review is read-only: do NOT switch branches, push commits, or modify code in this
-  skill. The user can chain `/start-ticket` afterwards if they want to act on the
-  review.
+  skill. If the user wants to act on the ticket afterwards, let them drive the
+  next step.
 - If the CLI returns 401/403, stop and prompt for fresh credentials — do not retry in
   a loop.

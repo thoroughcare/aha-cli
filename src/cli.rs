@@ -1,4 +1,5 @@
 use std::io::{IsTerminal, Read};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
@@ -221,6 +222,97 @@ pub enum FeaturesCommand {
         #[arg()]
         id: String,
     },
+    /// Create a new feature in a product.
+    Create(FeatureCreateArgs),
+    /// Edit an existing feature.
+    Edit(FeatureEditArgs),
+    /// Post a comment on a feature.
+    Comment(FeatureCommentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct FeatureCreateArgs {
+    /// Product reference prefix (e.g. `TC`) or ID.
+    #[arg(long)]
+    pub product: String,
+    /// Feature name.
+    #[arg(long)]
+    pub name: String,
+    /// Inline description (Markdown / HTML).
+    #[arg(long, conflicts_with_all = ["description_file", "editor"])]
+    pub description: Option<String>,
+    /// Read description from a file (`-` for stdin).
+    #[arg(long = "description-file", conflicts_with_all = ["description", "editor"])]
+    pub description_file: Option<PathBuf>,
+    /// Open `$EDITOR` to compose the description.
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
+    pub editor: bool,
+    /// Comma-separated list of tags. Replaces any existing tags.
+    #[arg(long)]
+    pub tags: Option<String>,
+    /// Assign to this user's email.
+    #[arg(long = "assignee")]
+    pub assignee: Option<String>,
+    /// Workflow status name (e.g. "In progress").
+    #[arg(long)]
+    pub status: Option<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FeatureEditArgs {
+    /// Feature reference (e.g. `TC-1234`) or ID.
+    #[arg()]
+    pub id: String,
+    /// New name.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Inline description (replaces existing).
+    #[arg(long, conflicts_with_all = ["description_file", "editor"])]
+    pub description: Option<String>,
+    /// Read description from a file (`-` for stdin).
+    #[arg(long = "description-file", conflicts_with_all = ["description", "editor"])]
+    pub description_file: Option<PathBuf>,
+    /// Open `$EDITOR` pre-filled with the existing description.
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
+    pub editor: bool,
+    /// Replace all tags with this comma-separated list.
+    #[arg(long, conflicts_with_all = ["add_tag", "remove_tag"])]
+    pub tags: Option<String>,
+    /// Add a tag (repeatable). Triggers a GET+PUT round-trip.
+    #[arg(long = "add-tag")]
+    pub add_tag: Vec<String>,
+    /// Remove a tag (repeatable). Triggers a GET+PUT round-trip.
+    #[arg(long = "remove-tag")]
+    pub remove_tag: Vec<String>,
+    #[arg(long = "assignee")]
+    pub assignee: Option<String>,
+    #[arg(long)]
+    pub status: Option<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FeatureCommentArgs {
+    /// Feature reference (e.g. `TC-1234`) or ID.
+    #[arg()]
+    pub id: String,
+    #[arg(long, conflicts_with_all = ["body_file", "editor"])]
+    pub body: Option<String>,
+    #[arg(long = "body-file", conflicts_with_all = ["body", "editor"])]
+    pub body_file: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["body", "body_file"])]
+    pub editor: bool,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -230,6 +322,49 @@ pub enum RequirementsCommand {
         #[arg()]
         id: String,
     },
+    /// Edit an existing requirement.
+    Edit(RequirementEditArgs),
+    /// Post a comment on a requirement.
+    Comment(RequirementCommentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RequirementEditArgs {
+    #[arg()]
+    pub id: String,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long, conflicts_with_all = ["description_file", "editor"])]
+    pub description: Option<String>,
+    #[arg(long = "description-file", conflicts_with_all = ["description", "editor"])]
+    pub description_file: Option<PathBuf>,
+    /// Open `$EDITOR` pre-filled with the existing description.
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
+    pub editor: bool,
+    #[arg(long)]
+    pub status: Option<String>,
+    #[arg(long = "assignee")]
+    pub assignee: Option<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RequirementCommentArgs {
+    #[arg()]
+    pub id: String,
+    #[arg(long, conflicts_with_all = ["body_file", "editor"])]
+    pub body: Option<String>,
+    #[arg(long = "body-file", conflicts_with_all = ["body", "editor"])]
+    pub body_file: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["body", "body_file"])]
+    pub editor: bool,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -244,6 +379,96 @@ pub enum TodosCommand {
         #[arg()]
         id: String,
     },
+    /// Create a new to-do.
+    Create(TodoCreateArgs),
+    /// Edit an existing to-do.
+    Edit(TodoEditArgs),
+    /// Mark a to-do completed.
+    Done {
+        #[arg()]
+        id: String,
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Re-open a completed to-do.
+    Reopen {
+        #[arg()]
+        id: String,
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        #[arg(short, long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct TodoCreateArgs {
+    /// Parent reference. Feature (`TC-1234`), requirement (`TC-1234-5`),
+    /// release (`TC-R-12`), or epic (`TC-E-42`).
+    #[arg(long)]
+    pub on: String,
+    /// Parent type. Inferred from `--on` prefix when omitted.
+    #[arg(long = "on-type", value_enum)]
+    pub on_type: Option<OnType>,
+    #[arg(long)]
+    pub name: String,
+    #[arg(long, conflicts_with_all = ["body_file", "editor"])]
+    pub body: Option<String>,
+    #[arg(long = "body-file", conflicts_with_all = ["body", "editor"])]
+    pub body_file: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["body", "body_file"])]
+    pub editor: bool,
+    /// Due date (`YYYY-MM-DD`).
+    #[arg(long = "due")]
+    pub due: Option<String>,
+    /// Assignee email. Repeatable.
+    #[arg(long = "assignee")]
+    pub assignee: Vec<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct TodoEditArgs {
+    #[arg()]
+    pub id: String,
+    #[arg(long)]
+    pub name: Option<String>,
+    #[arg(long, conflicts_with_all = ["body_file", "editor"])]
+    pub body: Option<String>,
+    #[arg(long = "body-file", conflicts_with_all = ["body", "editor"])]
+    pub body_file: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["body", "body_file"])]
+    pub editor: bool,
+    /// Status: `pending` or `completed`.
+    #[arg(long, value_enum)]
+    pub status: Option<TodoStatusArg>,
+    #[arg(long = "due")]
+    pub due: Option<String>,
+    #[arg(long = "assignee")]
+    pub assignee: Vec<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum OnType {
+    Feature,
+    Requirement,
+    Release,
+    Epic,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum TodoStatusArg {
+    Pending,
+    Completed,
 }
 
 #[derive(Debug, Subcommand)]
@@ -496,6 +721,15 @@ async fn dispatch_features(cli: &Cli, command: &FeaturesCommand) -> Result<()> {
         FeaturesCommand::Show { id } => {
             cmd::features::show(&client, id, cli.resolved_format()).await
         }
+        FeaturesCommand::Create(args) => {
+            cmd::features::create(&client, args, cli.resolved_format()).await
+        }
+        FeaturesCommand::Edit(args) => {
+            cmd::features::edit(&client, args, cli.resolved_format()).await
+        }
+        FeaturesCommand::Comment(args) => {
+            cmd::features::comment(&client, args, cli.resolved_format()).await
+        }
     }
 }
 
@@ -504,6 +738,12 @@ async fn dispatch_requirements(cli: &Cli, command: &RequirementsCommand) -> Resu
     match command {
         RequirementsCommand::Show { id } => {
             cmd::requirements::show(&client, id, cli.resolved_format()).await
+        }
+        RequirementsCommand::Edit(args) => {
+            cmd::requirements::edit(&client, args, cli.resolved_format()).await
+        }
+        RequirementsCommand::Comment(args) => {
+            cmd::requirements::comment(&client, args, cli.resolved_format()).await
         }
     }
 }
@@ -515,6 +755,32 @@ async fn dispatch_todos(cli: &Cli, command: &TodosCommand) -> Result<()> {
             cmd::todos::list(&client, feature.as_deref(), cli.resolved_format()).await
         }
         TodosCommand::Show { id } => cmd::todos::show(&client, id, cli.resolved_format()).await,
+        TodosCommand::Create(args) => {
+            cmd::todos::create(&client, args, cli.resolved_format()).await
+        }
+        TodosCommand::Edit(args) => cmd::todos::edit(&client, args, cli.resolved_format()).await,
+        TodosCommand::Done { id, dry_run, yes } => {
+            cmd::todos::set_status(
+                &client,
+                id,
+                crate::client::resources::TodoStatus::Completed,
+                *dry_run,
+                *yes,
+                cli.resolved_format(),
+            )
+            .await
+        }
+        TodosCommand::Reopen { id, dry_run, yes } => {
+            cmd::todos::set_status(
+                &client,
+                id,
+                crate::client::resources::TodoStatus::Pending,
+                *dry_run,
+                *yes,
+                cli.resolved_format(),
+            )
+            .await
+        }
     }
 }
 

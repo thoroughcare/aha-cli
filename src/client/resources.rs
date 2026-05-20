@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::models::*;
 use super::AhaClient;
@@ -410,6 +410,212 @@ impl AhaClient {
     }
 }
 
+// ---------- Write surface ----------
+//
+// Aha! wraps create/update bodies in a top-level resource key (`feature`,
+// `task`, `comment`, …). Each request struct below corresponds to the
+// inner object; `Envelope` wraps it for the wire so we get compile-time
+// checking instead of `serde_json::json!()` blobs. Optional fields
+// `skip_serializing_if = "Option::is_none"` so a write that omits a field
+// truly omits it, leaving the existing value untouched.
+
+/// Externally-tagged envelope for write bodies. Serializes to
+/// `{"feature": {...}}` / `{"task": {...}}` / etc., matching Aha!'s wire
+/// format on create / update.
+#[derive(Serialize)]
+enum Envelope<'a, T: Serialize> {
+    #[serde(rename = "feature")]
+    Feature(&'a T),
+    #[serde(rename = "task")]
+    Task(&'a T),
+    #[serde(rename = "requirement")]
+    Requirement(&'a T),
+    #[serde(rename = "comment")]
+    Comment(&'a T),
+}
+
+#[derive(Serialize)]
+pub struct FeatureCreate<'a> {
+    pub name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_user: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_status: Option<&'a str>,
+}
+
+#[derive(Default, Serialize)]
+pub struct FeatureUpdate<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_user: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_status: Option<&'a str>,
+}
+
+#[derive(Default, Serialize)]
+pub struct RequirementUpdate<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_user: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum TaskableType {
+    #[serde(rename = "Feature")]
+    Feature,
+    #[serde(rename = "Requirement")]
+    Requirement,
+    #[serde(rename = "Release")]
+    Release,
+    #[serde(rename = "Epic")]
+    Epic,
+}
+
+impl std::fmt::Display for TaskableType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TaskableType::Feature => "Feature",
+            TaskableType::Requirement => "Requirement",
+            TaskableType::Release => "Release",
+            TaskableType::Epic => "Epic",
+        };
+        f.write_str(s)
+    }
+}
+
+#[derive(Serialize)]
+pub struct TodoCreate<'a> {
+    pub name: &'a str,
+    pub body: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taskable_type: Option<TaskableType>,
+    pub taskable_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_users: Option<Vec<String>>,
+}
+
+#[derive(Default, Serialize)]
+pub struct TodoUpdate<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<TodoStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_users: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum TodoStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "completed")]
+    Completed,
+}
+
+#[derive(Serialize)]
+struct CommentBody<'a> {
+    body: &'a str,
+}
+
+impl AhaClient {
+    pub async fn create_feature(&self, product: &str, body: &FeatureCreate<'_>) -> Result<Feature> {
+        let env = Envelope::Feature(body);
+        let resp: OneEnvelope<Feature> = self
+            .post_json(&format!("/products/{product}/features"), &env)
+            .await?;
+        resp.feature
+            .ok_or_else(|| anyhow::anyhow!("create_feature: response missing `feature` key"))
+    }
+
+    pub async fn update_feature(
+        &self,
+        id_or_ref: &str,
+        body: &FeatureUpdate<'_>,
+    ) -> Result<Feature> {
+        let env = Envelope::Feature(body);
+        let resp: OneEnvelope<Feature> = self
+            .put_json(&format!("/features/{id_or_ref}"), &env)
+            .await?;
+        resp.feature
+            .ok_or_else(|| anyhow::anyhow!("update_feature: response missing `feature` key"))
+    }
+
+    pub async fn create_feature_comment(&self, id_or_ref: &str, body: &str) -> Result<Comment> {
+        let payload = CommentBody { body };
+        let env = Envelope::Comment(&payload);
+        // Aha!'s comment-create response wraps in `{"comment": {...}}`.
+        #[derive(Deserialize)]
+        struct CommentResp {
+            comment: Comment,
+        }
+        let resp: CommentResp = self
+            .post_json(&format!("/features/{id_or_ref}/comments"), &env)
+            .await?;
+        Ok(resp.comment)
+    }
+
+    pub async fn update_requirement(
+        &self,
+        id_or_ref: &str,
+        body: &RequirementUpdate<'_>,
+    ) -> Result<Requirement> {
+        let env = Envelope::Requirement(body);
+        let resp: OneEnvelope<Requirement> = self
+            .put_json(&format!("/requirements/{id_or_ref}"), &env)
+            .await?;
+        resp.requirement.ok_or_else(|| {
+            anyhow::anyhow!("update_requirement: response missing `requirement` key")
+        })
+    }
+
+    pub async fn create_requirement_comment(&self, id_or_ref: &str, body: &str) -> Result<Comment> {
+        let payload = CommentBody { body };
+        let env = Envelope::Comment(&payload);
+        #[derive(Deserialize)]
+        struct CommentResp {
+            comment: Comment,
+        }
+        let resp: CommentResp = self
+            .post_json(&format!("/requirements/{id_or_ref}/comments"), &env)
+            .await?;
+        Ok(resp.comment)
+    }
+
+    pub async fn create_todo(&self, body: &TodoCreate<'_>) -> Result<Todo> {
+        let env = Envelope::Task(body);
+        let resp: OneEnvelope<Todo> = self.post_json("/tasks", &env).await?;
+        resp.task
+            .ok_or_else(|| anyhow::anyhow!("create_todo: response missing `task` key"))
+    }
+
+    pub async fn update_todo(&self, id: &str, body: &TodoUpdate<'_>) -> Result<Todo> {
+        let env = Envelope::Task(body);
+        let resp: OneEnvelope<Todo> = self.put_json(&format!("/tasks/{id}"), &env).await?;
+        resp.task
+            .ok_or_else(|| anyhow::anyhow!("update_todo: response missing `task` key"))
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FeatureFilters {
     pub product: Option<String>,
@@ -689,5 +895,139 @@ mod tests {
         assert_eq!(urlencoding("hello world"), "hello%20world");
         assert_eq!(urlencoding("foo=bar"), "foo%3Dbar");
         assert_eq!(urlencoding("simple"), "simple");
+    }
+
+    #[test]
+    fn feature_create_serializes_envelope_with_skipped_nones() {
+        let body = FeatureCreate {
+            name: "Add browse view",
+            description: None,
+            tags: None,
+            assigned_to_user: None,
+            workflow_status: None,
+        };
+        let env = Envelope::Feature(&body);
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"feature": {"name": "Add browse view"}})
+        );
+    }
+
+    #[test]
+    fn todo_update_serializes_only_status() {
+        let body = TodoUpdate {
+            name: None,
+            body: None,
+            status: Some(TodoStatus::Completed),
+            due_date: None,
+            assigned_to_users: None,
+        };
+        let env = Envelope::Task(&body);
+        let json = serde_json::to_value(&env).unwrap();
+        assert_eq!(json, serde_json::json!({"task": {"status": "completed"}}));
+    }
+
+    #[test]
+    fn taskable_type_round_trips_as_strings() {
+        let json = serde_json::to_value(TaskableType::Feature).unwrap();
+        assert_eq!(json, serde_json::Value::String("Feature".into()));
+        let json = serde_json::to_value(TaskableType::Requirement).unwrap();
+        assert_eq!(json, serde_json::Value::String("Requirement".into()));
+        let json = serde_json::to_value(TaskableType::Release).unwrap();
+        assert_eq!(json, serde_json::Value::String("Release".into()));
+        let json = serde_json::to_value(TaskableType::Epic).unwrap();
+        assert_eq!(json, serde_json::Value::String("Epic".into()));
+    }
+
+    #[test]
+    fn snowflake_id_in_taskable_id_preserved_verbatim() {
+        let body = TodoCreate {
+            name: "x",
+            body: "y",
+            taskable_type: Some(TaskableType::Feature),
+            taskable_id: "7626760672407598886",
+            due_date: None,
+            assigned_to_users: None,
+        };
+        let env = Envelope::Task(&body);
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(
+            json.contains("\"taskable_id\":\"7626760672407598886\""),
+            "expected snowflake id to round-trip as a quoted string, got: {json}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_does_not_retry_on_429() {
+        let server = MockServer::start().await;
+        // Two 429s in a row. If retry were on, the request would be replayed.
+        Mock::given(method("POST"))
+            .and(path("/features/TC-1/comments"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = AhaClient::with_base_url(&creds(), &server.uri()).unwrap();
+        let err = client
+            .create_feature_comment("TC-1", "hi")
+            .await
+            .expect_err("429 should surface, not retry");
+        assert!(
+            format!("{err:#}").contains("429"),
+            "expected 429 in error, got: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_surfaces_422_validation_message() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/features/TC-1/comments"))
+            .respond_with(ResponseTemplate::new(422).set_body_string("body can't be blank"))
+            .mount(&server)
+            .await;
+
+        let client = AhaClient::with_base_url(&creds(), &server.uri()).unwrap();
+        let err = client
+            .create_feature_comment("TC-1", "")
+            .await
+            .expect_err("422 should surface");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("422"), "missing 422: {msg}");
+        assert!(msg.contains("body can't be blank"), "missing detail: {msg}");
+    }
+
+    #[tokio::test]
+    async fn put_retries_on_429_and_replays_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/tasks/t1"))
+            .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "0"))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/tasks/t1"))
+            .and(wiremock::matchers::body_json(
+                serde_json::json!({"task": {"status": "completed"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "task": {"id": "t1", "name": "x", "status": "completed"}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AhaClient::with_base_url(&creds(), &server.uri()).unwrap();
+        let body = TodoUpdate {
+            name: None,
+            body: None,
+            status: Some(TodoStatus::Completed),
+            due_date: None,
+            assigned_to_users: None,
+        };
+        let todo = client.update_todo("t1", &body).await.unwrap();
+        assert_eq!(todo.status.as_deref(), Some("completed"));
     }
 }

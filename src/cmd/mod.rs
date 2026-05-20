@@ -7,6 +7,7 @@ pub mod products;
 pub mod releases;
 pub mod requirements;
 pub mod todos;
+pub mod write;
 
 use serde::Serialize;
 use tabled::Tabled;

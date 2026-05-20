@@ -1,7 +1,8 @@
 use std::fs;
 
 use assert_cmd::Command;
-use wiremock::matchers::{method, path};
+use predicates::prelude::*;
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn write_creds(home: &std::path::Path) {
@@ -134,4 +135,195 @@ async fn features_list_walks_paginated_response() {
     assert_eq!(arr.len(), 250);
     assert_eq!(arr[0]["reference_num"], "TC-1");
     assert_eq!(arr[249]["reference_num"], "TC-250");
+}
+
+#[tokio::test]
+async fn create_feature_posts_envelope_and_announces_on_stderr() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/products/TC/features"))
+        .and(body_json(serde_json::json!({
+            "feature": {"name": "Add browse view"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "feature": {
+                "id": "100",
+                "reference_num": "TC-42",
+                "name": "Add browse view"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let out = Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args([
+            "features",
+            "create",
+            "--product",
+            "TC",
+            "--name",
+            "Add browse view",
+            "--yes",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Created feature TC-42"),
+        "stderr missing announce line: {stderr}"
+    );
+}
+
+#[tokio::test]
+async fn edit_feature_dry_run_makes_no_request() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    // No mock registered → wiremock would error on unexpected calls.
+    let out = Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["features", "edit", "TC-1", "--name", "Renamed", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("dry-run"),
+        "missing dry-run preview: {stdout}"
+    );
+    assert!(
+        stdout.contains("PUT /features/TC-1"),
+        "missing path: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"name\": \"Renamed\""),
+        "missing name in body: {stdout}"
+    );
+}
+
+#[tokio::test]
+async fn edit_feature_with_add_tag_does_get_then_put() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    // GET fetches existing tags.
+    Mock::given(method("GET"))
+        .and(path("/features/TC-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "feature": {
+                "id": "100",
+                "reference_num": "TC-1",
+                "name": "feat",
+                "tags": ["alpha", "beta"]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // PUT receives the merged tag list.
+    Mock::given(method("PUT"))
+        .and(path("/features/TC-1"))
+        .and(body_json(serde_json::json!({
+            "feature": {"tags": "alpha,beta,gamma"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "feature": {"id": "100", "reference_num": "TC-1", "name": "feat", "tags": ["alpha","beta","gamma"]}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["features", "edit", "TC-1", "--add-tag", "gamma", "--yes"])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn comment_on_feature_posts_envelope_with_body() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/features/TC-1/comments"))
+        .and(body_json(serde_json::json!({
+            "comment": {"body": "looks good"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "comment": {"id": "c1", "body": "looks good"}
+        })))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args([
+            "features",
+            "comment",
+            "TC-1",
+            "--body",
+            "looks good",
+            "--yes",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Posted comment"));
+}
+
+#[tokio::test]
+async fn comment_surfaces_422_validation_error() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/features/TC-1/comments"))
+        .respond_with(ResponseTemplate::new(422).set_body_string("body too short"))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["features", "comment", "TC-1", "--body", "x", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("422"))
+        .stderr(predicate::str::contains("body too short"));
 }

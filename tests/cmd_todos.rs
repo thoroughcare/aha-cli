@@ -2,7 +2,7 @@ use std::fs;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn write_creds(home: &std::path::Path) {
@@ -98,4 +98,123 @@ async fn todos_show_surfaces_body_and_attachments() {
         .stdout(predicate::str::contains("trace.log"))
         .stdout(predicate::str::contains("comments: 1 entries"))
         .stdout(predicate::str::contains("diff.patch"));
+}
+
+#[tokio::test]
+async fn todos_done_sets_status_completed() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/tasks/t1"))
+        .and(body_json(serde_json::json!({
+            "task": {"status": "completed"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "completed"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["todos", "done", "t1", "--yes"])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn todos_reopen_sets_status_pending() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/tasks/t1"))
+        .and(body_json(serde_json::json!({
+            "task": {"status": "pending"}
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "pending"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["todos", "reopen", "t1", "--yes"])
+        .assert()
+        .success();
+}
+
+#[tokio::test]
+async fn todos_create_envelopes_taskable_fields() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/tasks"))
+        .and(body_json(serde_json::json!({
+            "task": {
+                "name": "Investigate",
+                "body": "",
+                "taskable_type": "Feature",
+                "taskable_id": "TC-1"
+            }
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t99", "name": "Investigate"}
+        })))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args([
+            "todos",
+            "create",
+            "--on",
+            "TC-1",
+            "--name",
+            "Investigate",
+            "--yes",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Created to-do"));
+}
+
+#[tokio::test]
+async fn todos_edit_with_no_changes_errors_before_request() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+    // No mocks registered — any request would fail.
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["todos", "edit", "t1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nothing to update"));
 }

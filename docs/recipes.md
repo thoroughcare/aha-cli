@@ -159,3 +159,36 @@ $ aha products list
 For schemas / typed output: every `list` and `show` command's JSON shape
 mirrors the underlying Aha! API response, with snowflake IDs typed as
 strings (so they round-trip through `jq` without precision loss).
+
+## Write / edit commands
+
+Every mutating command goes through the same safety rails: explicit
+`--yes` to skip the TTY confirmation, `--dry-run` to preview the
+request without sending it, and free-form bodies via
+`--body / --body-file <path|-> / --editor`.
+
+```sh
+# Post a comment on a feature.
+aha features comment TC-1234 --body "shipped in 0.2"
+
+# Same, body piped from another tool.
+git log -1 --format='%B' | aha features comment TC-1234 --body-file - --yes
+
+# Mark a to-do done, no prompt.
+aha todos done 7626760672407598886 --yes
+
+# Create a to-do scoped to a feature, with an assignee.
+aha todos create --on TC-1234 --name "Smoke test in staging" \
+  --assignee qa@example.com --yes
+
+# Preview the JSON envelope without touching the wire.
+aha features edit TC-1234 --add-tag urgent --dry-run
+
+# Open $EDITOR pre-filled with the existing requirement description.
+aha requirements edit TC-1234-5 --editor
+```
+
+Pipes / non-TTY shells (including agent harnesses) **must** pass
+`--yes` — the confirmation prompt is suppressed and the command exits
+with an error otherwise. This is intentional: it stops an LLM-driven
+agent from issuing surprise writes.

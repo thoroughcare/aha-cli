@@ -55,6 +55,25 @@ account; for now `--with-token` is the supported path.
 | `aha attachments download <id>` | Download an attachment to disk (see caveat below). |
 | `aha completions <shell>`       | Print a completion script. |
 
+### Write / edit commands
+
+| Command                                        | What it does |
+| ---------------------------------------------- | ------------ |
+| `aha features create --product <P> --name <N>` | Create a feature. |
+| `aha features edit <ref> [field flags]`        | Update fields; `--add-tag` / `--remove-tag` do a GET+PUT merge. |
+| `aha features comment <ref>`                   | Post a comment on a feature. |
+| `aha requirements edit <ref> [field flags]`    | Update a requirement; `--editor` pre-fills the existing description. |
+| `aha requirements comment <ref>`               | Post a comment on a requirement. |
+| `aha todos create --on <ref> --name <N>`       | Create a to-do scoped to a feature / requirement / release / epic. |
+| `aha todos edit <id>`                          | Update fields on an existing to-do. |
+| `aha todos done <id>` / `reopen <id>`          | Convenience: flip status to completed / pending. |
+
+Every write command supports `--dry-run` (prints the request without
+sending), `--yes` / `-y` (skip the TTY prompt), and one of
+`--body / --body-file <path|-> / --editor` for free-form bodies.
+Non-TTY shells must pass `--yes` explicitly — agents can't write
+without opting in.
+
 Run `aha <command> --help` for full details.
 
 See [`docs/recipes.md`](docs/recipes.md) for task-oriented examples.

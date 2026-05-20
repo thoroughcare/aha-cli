@@ -1,7 +1,11 @@
 use anyhow::Result;
 
+use crate::cli::{OnType, TodoCreateArgs, TodoEditArgs, TodoStatusArg};
+use crate::client::models::Todo;
+use crate::client::resources::{TaskableType, TodoCreate, TodoStatus, TodoUpdate};
 use crate::client::AhaClient;
-use crate::output::{render_list, OutputFormat};
+use crate::cmd::write::{confirm, dry_run_preview, BodySource, Confirm, ConfirmOpts};
+use crate::output::{render_list, render_one, OutputFormat};
 
 use super::TodoRow;
 
@@ -111,5 +115,253 @@ fn print_attachment_indented(a: &crate::client::models::Attachment, indent: &str
     println!("{indent}- {} [id={}{ct}{size}]", a.file_name, a.id);
     if let Some(url) = a.download_url.as_deref() {
         println!("{indent}  download: {url}");
+    }
+}
+
+// ---------- Write surface ----------
+
+pub async fn create(client: &AhaClient, args: &TodoCreateArgs, format: OutputFormat) -> Result<()> {
+    let taskable_type = match args.on_type {
+        Some(t) => map_on_type(t),
+        None => infer_taskable_type(&args.on).ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not infer parent type from --on={} — pass --on-type {{feature|requirement|release|epic}}",
+                args.on
+            )
+        })?,
+    };
+
+    let body_text =
+        BodySource::from_flags(args.body.clone(), args.body_file.clone(), args.editor, None)
+            .map(|src| src.resolve())
+            .transpose()?
+            .unwrap_or_default();
+
+    let assignees = if args.assignee.is_empty() {
+        None
+    } else {
+        Some(args.assignee.clone())
+    };
+
+    let body = TodoCreate {
+        name: &args.name,
+        body: &body_text,
+        taskable_type: Some(taskable_type),
+        taskable_id: &args.on,
+        due_date: args.due.as_deref(),
+        assigned_to_users: assignees,
+    };
+
+    let preview = dry_run_preview("POST", "/tasks", &serde_json::json!({ "task": &body }));
+    let opts = ConfirmOpts {
+        summary: &format!(
+            "create to-do '{}' on {} {}?",
+            args.name, taskable_type, args.on
+        ),
+        preview: &preview,
+        dry_run: args.dry_run,
+        yes: args.yes,
+    };
+    if confirm(&opts)? == Confirm::DryRun {
+        return Ok(());
+    }
+
+    let todo = client.create_todo(&body).await?;
+    eprintln!(
+        "Created to-do (id={}) on {} {}",
+        todo.id, taskable_type, args.on
+    );
+    print_todo_detail(&todo, format)
+}
+
+pub async fn edit(client: &AhaClient, args: &TodoEditArgs, format: OutputFormat) -> Result<()> {
+    let body_text = if args.body.is_some() || args.body_file.is_some() {
+        BodySource::from_flags(args.body.clone(), args.body_file.clone(), false, None)
+            .map(|src| src.resolve())
+            .transpose()?
+    } else if args.editor {
+        let existing = client.get_todo(&args.id).await?;
+        BodySource::Editor {
+            prefill: existing.body.clone(),
+        }
+        .resolve()
+        .map(Some)?
+    } else {
+        None
+    };
+
+    let assignees = if args.assignee.is_empty() {
+        None
+    } else {
+        Some(args.assignee.clone())
+    };
+
+    let body = TodoUpdate {
+        name: args.name.as_deref(),
+        body: body_text.as_deref(),
+        status: args.status.map(map_status),
+        due_date: args.due.as_deref(),
+        assigned_to_users: assignees,
+    };
+
+    if body.name.is_none()
+        && body.body.is_none()
+        && body.status.is_none()
+        && body.due_date.is_none()
+        && body.assigned_to_users.is_none()
+    {
+        anyhow::bail!("nothing to update — pass at least one of --name / --body / --status / --due / --assignee");
+    }
+
+    let preview = dry_run_preview(
+        "PUT",
+        &format!("/tasks/{}", args.id),
+        &serde_json::json!({ "task": &body }),
+    );
+    let opts = ConfirmOpts {
+        summary: &format!("update to-do {}?", args.id),
+        preview: &preview,
+        dry_run: args.dry_run,
+        yes: args.yes,
+    };
+    if confirm(&opts)? == Confirm::DryRun {
+        return Ok(());
+    }
+
+    let todo = client.update_todo(&args.id, &body).await?;
+    eprintln!("Updated to-do (id={})", todo.id);
+    print_todo_detail(&todo, format)
+}
+
+pub async fn set_status(
+    client: &AhaClient,
+    id: &str,
+    status: TodoStatus,
+    dry_run: bool,
+    yes: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    let body = TodoUpdate {
+        name: None,
+        body: None,
+        status: Some(status),
+        due_date: None,
+        assigned_to_users: None,
+    };
+    let label = match status {
+        TodoStatus::Completed => "complete",
+        TodoStatus::Pending => "re-open",
+    };
+    let preview = dry_run_preview(
+        "PUT",
+        &format!("/tasks/{id}"),
+        &serde_json::json!({ "task": &body }),
+    );
+    let opts = ConfirmOpts {
+        summary: &format!("{label} to-do {id}?"),
+        preview: &preview,
+        dry_run,
+        yes,
+    };
+    if confirm(&opts)? == Confirm::DryRun {
+        return Ok(());
+    }
+    let todo = client.update_todo(id, &body).await?;
+    eprintln!(
+        "To-do {} now {}",
+        id,
+        match status {
+            TodoStatus::Completed => "completed",
+            TodoStatus::Pending => "pending",
+        }
+    );
+    print_todo_detail(&todo, format)
+}
+
+fn print_todo_detail(t: &Todo, format: OutputFormat) -> Result<()> {
+    let kv: Vec<(&str, String)> = vec![
+        ("id", t.id.clone()),
+        ("name", t.name.clone()),
+        ("status", t.status.clone().unwrap_or_else(|| "—".into())),
+        (
+            "due_date",
+            t.due_date
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "—".into()),
+        ),
+    ];
+    render_one(format, &kv, t)
+}
+
+fn map_on_type(t: OnType) -> TaskableType {
+    match t {
+        OnType::Feature => TaskableType::Feature,
+        OnType::Requirement => TaskableType::Requirement,
+        OnType::Release => TaskableType::Release,
+        OnType::Epic => TaskableType::Epic,
+    }
+}
+
+fn map_status(s: TodoStatusArg) -> TodoStatus {
+    match s {
+        TodoStatusArg::Pending => TodoStatus::Pending,
+        TodoStatusArg::Completed => TodoStatus::Completed,
+    }
+}
+
+/// Reference-prefix heuristic. Aha! encodes parent type in the reference
+/// itself: `TC-1234` (feature), `TC-R-12` (release), `TC-E-42` (epic),
+/// `TC-1234-5` (requirement). Numeric ids and anything else return `None`
+/// so the caller can demand `--on-type` explicitly.
+pub(super) fn infer_taskable_type(reference: &str) -> Option<TaskableType> {
+    let trimmed = reference.trim();
+    let parts: Vec<&str> = trimmed.split('-').collect();
+    match parts.as_slice() {
+        // PREFIX-R-N → release
+        [_, "R" | "r", n] if n.chars().all(|c| c.is_ascii_digit()) => Some(TaskableType::Release),
+        // PREFIX-E-N → epic
+        [_, "E" | "e", n] if n.chars().all(|c| c.is_ascii_digit()) => Some(TaskableType::Epic),
+        // PREFIX-N-M → requirement
+        [_, a, b]
+            if a.chars().all(|c| c.is_ascii_digit()) && b.chars().all(|c| c.is_ascii_digit()) =>
+        {
+            Some(TaskableType::Requirement)
+        }
+        // PREFIX-N → feature
+        [_, n] if n.chars().all(|c| c.is_ascii_digit()) => Some(TaskableType::Feature),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_feature_from_reference() {
+        assert_eq!(infer_taskable_type("TC-1234"), Some(TaskableType::Feature));
+    }
+
+    #[test]
+    fn infer_requirement_from_reference() {
+        assert_eq!(
+            infer_taskable_type("TC-1234-5"),
+            Some(TaskableType::Requirement)
+        );
+    }
+
+    #[test]
+    fn infer_release_from_reference() {
+        assert_eq!(infer_taskable_type("TC-R-12"), Some(TaskableType::Release));
+    }
+
+    #[test]
+    fn infer_epic_from_reference() {
+        assert_eq!(infer_taskable_type("TC-E-42"), Some(TaskableType::Epic));
+    }
+
+    #[test]
+    fn infer_rejects_bare_numeric_id() {
+        assert_eq!(infer_taskable_type("7626760672407598886"), None);
     }
 }

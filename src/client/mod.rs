@@ -11,7 +11,14 @@ use crate::auth::Credentials;
 pub struct AhaClient {
     base_url: String,
     http: reqwest::Client,
+    // Separate client for signed download URLs: no auth header (Aha! download
+    // URLs carry their own signed token in the query string and 302 to S3,
+    // which rejects an unrelated Bearer), no automatic redirects (we detect
+    // the tombstoned-blob 302→/access_denied pattern ourselves).
+    download_http: reqwest::Client,
 }
+
+const USER_AGENT: &str = concat!("aha-cli/", env!("CARGO_PKG_VERSION"));
 
 impl AhaClient {
     pub fn new(creds: &Credentials) -> Result<Self> {
@@ -36,13 +43,20 @@ impl AhaClient {
 
         let http = reqwest::Client::builder()
             .default_headers(headers)
-            .user_agent(concat!("aha-cli/", env!("CARGO_PKG_VERSION")))
+            .user_agent(USER_AGENT)
             .build()
             .context("building HTTP client")?;
+
+        let download_http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent(USER_AGENT)
+            .build()
+            .context("building download HTTP client")?;
 
         Ok(Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             http,
+            download_http,
         })
     }
 
@@ -52,6 +66,10 @@ impl AhaClient {
 
     pub(crate) fn http(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    pub(crate) fn download_http(&self) -> &reqwest::Client {
+        &self.download_http
     }
 
     /// GET /api/v1/me — used by `auth check` and `auth whoami`.

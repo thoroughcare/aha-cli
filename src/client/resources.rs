@@ -368,11 +368,8 @@ impl AhaClient {
             .download_url
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("attachment {id} has no download_url"))?;
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .context("building download client")?;
-        let resp = client
+        let resp = self
+            .download_http()
             .get(url)
             .send()
             .await

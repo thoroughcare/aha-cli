@@ -60,7 +60,7 @@ aha auth check
 aha backlog
 ```
 
-## Commands
+## Read commands
 
 | Command                         | What it does |
 | ------------------------------- | ------------ |
@@ -84,7 +84,7 @@ aha backlog
 | `aha attachments download <id>` | Download an attachment to disk (see caveat below). |
 | `aha completions <shell>`       | Print a completion script. |
 
-### Write / edit commands
+## Write / edit commands
 
 | Command                                        | What it does |
 | ---------------------------------------------- | ------------ |

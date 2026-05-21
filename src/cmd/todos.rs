@@ -34,7 +34,7 @@ pub async fn show(client: &AhaClient, id: &str, format: OutputFormat) -> Result<
         }
         OutputFormat::Table => {
             let t = &deep.todo;
-            let max_key = "due_date".len();
+            let max_key = "assignees".len();
             println!("{:<width$}  {}", "id", t.id, width = max_key);
             println!("{:<width$}  {}", "name", t.name, width = max_key);
             println!(
@@ -61,6 +61,9 @@ pub async fn show(client: &AhaClient, id: &str, format: OutputFormat) -> Result<
                     .join(", ")
             };
             println!("{:<width$}  {}", "assignees", assignees, width = max_key);
+            if let Some(url) = t.url.as_deref().filter(|u| !u.is_empty()) {
+                println!("{:<width$}  {}", "url", url, width = max_key);
+            }
 
             if let Some(body) = t.body.as_ref().filter(|b| !b.is_empty()) {
                 println!("\nbody:\n{body}");
@@ -266,7 +269,26 @@ pub async fn set_status(
     if confirm(&opts)? == Confirm::DryRun {
         return Ok(());
     }
-    let todo = client.update_todo(id, &body).await?;
+    let _ = client.update_todo(id, &body).await?;
+
+    // Empirically (probed 2026-05-21 via examples/probe_task_status.rs),
+    // Aha!'s public API accepts the PUT with 200 OK but silently does not
+    // persist task status changes. Re-GET to verify; if the state didn't
+    // move, surface a clear error so users don't think the to-do is done
+    // when it isn't. Same applies for `reopen` flipping back to pending.
+    let verified = client.get_todo(id).await?;
+    let expected = match status {
+        TodoStatus::Completed => "complete",
+        TodoStatus::Pending => "pending",
+    };
+    let actual = verified.status.as_deref().unwrap_or("(none)");
+    if actual != expected {
+        anyhow::bail!(
+            "Aha! accepted the PUT but the to-do's status is still `{actual}` (expected `{expected}`). \
+             This is a known Aha! API limitation: `PUT /tasks/<id>` silently no-ops `status`. \
+             Use the Aha! web UI to flip the to-do."
+        );
+    }
     eprintln!(
         "To-do {} now {}",
         id,
@@ -275,11 +297,11 @@ pub async fn set_status(
             TodoStatus::Pending => "pending",
         }
     );
-    print_todo_detail(&todo, format)
+    print_todo_detail(&verified, format)
 }
 
 fn print_todo_detail(t: &Todo, format: OutputFormat) -> Result<()> {
-    let kv: Vec<(&str, String)> = vec![
+    let mut kv: Vec<(&str, String)> = vec![
         ("id", t.id.clone()),
         ("name", t.name.clone()),
         ("status", t.status.clone().unwrap_or_else(|| "—".into())),
@@ -290,6 +312,9 @@ fn print_todo_detail(t: &Todo, format: OutputFormat) -> Result<()> {
                 .unwrap_or_else(|| "—".into()),
         ),
     ];
+    if let Some(url) = t.url.as_deref().filter(|u| !u.is_empty()) {
+        kv.push(("url", url.to_string()));
+    }
     render_one(format, &kv, t)
 }
 

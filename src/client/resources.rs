@@ -461,6 +461,17 @@ pub struct FeatureUpdate<'a> {
     pub workflow_status: Option<&'a str>,
 }
 
+#[derive(Serialize)]
+pub struct RequirementCreate<'a> {
+    pub name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assigned_to_user: Option<&'a str>,
+}
+
 #[derive(Default, Serialize)]
 pub struct RequirementUpdate<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -524,11 +535,15 @@ pub struct TodoUpdate<'a> {
     pub assigned_to_users: Option<Vec<String>>,
 }
 
+/// Status values accepted by `PUT /tasks/<id>` (`task.status`). Aha!'s
+/// wire vocabulary is `"pending"` / `"complete"` — note: `"completed"`
+/// is rejected with a 400. Captured empirically via
+/// `examples/probe_task_status.rs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum TodoStatus {
     #[serde(rename = "pending")]
     Pending,
-    #[serde(rename = "completed")]
+    #[serde(rename = "complete")]
     Completed,
 }
 
@@ -572,6 +587,20 @@ impl AhaClient {
             .post_json(&format!("/features/{id_or_ref}/comments"), &env)
             .await?;
         Ok(resp.comment)
+    }
+
+    pub async fn create_requirement(
+        &self,
+        feature_id_or_ref: &str,
+        body: &RequirementCreate<'_>,
+    ) -> Result<Requirement> {
+        let env = Envelope::Requirement(body);
+        let resp: OneEnvelope<Requirement> = self
+            .post_json(&format!("/features/{feature_id_or_ref}/requirements"), &env)
+            .await?;
+        resp.requirement.ok_or_else(|| {
+            anyhow::anyhow!("create_requirement: response missing `requirement` key")
+        })
     }
 
     pub async fn update_requirement(
@@ -925,7 +954,7 @@ mod tests {
         };
         let env = Envelope::Task(&body);
         let json = serde_json::to_value(&env).unwrap();
-        assert_eq!(json, serde_json::json!({"task": {"status": "completed"}}));
+        assert_eq!(json, serde_json::json!({"task": {"status": "complete"}}));
     }
 
     #[test]
@@ -1011,10 +1040,10 @@ mod tests {
         Mock::given(method("PUT"))
             .and(path("/tasks/t1"))
             .and(wiremock::matchers::body_json(
-                serde_json::json!({"task": {"status": "completed"}}),
+                serde_json::json!({"task": {"status": "complete"}}),
             ))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "task": {"id": "t1", "name": "x", "status": "completed"}
+                "task": {"id": "t1", "name": "x", "status": "complete"}
             })))
             .mount(&server)
             .await;
@@ -1028,6 +1057,6 @@ mod tests {
             assigned_to_users: None,
         };
         let todo = client.update_todo("t1", &body).await.unwrap();
-        assert_eq!(todo.status.as_deref(), Some("completed"));
+        assert_eq!(todo.status.as_deref(), Some("complete"));
     }
 }

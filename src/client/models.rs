@@ -133,6 +133,11 @@ pub struct Todo {
     /// the show endpoint surfaces these.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// Web URL to the to-do in the Aha! UI. Populated by the per-task
+    /// GET (`/tasks/:id`); the list endpoint returns it too. Routes
+    /// transparently from `tasks/<numeric-id>` to `tasks/<PREFIX-TODO-N>`.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

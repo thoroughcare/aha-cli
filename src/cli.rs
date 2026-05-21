@@ -322,10 +322,35 @@ pub enum RequirementsCommand {
         #[arg()]
         id: String,
     },
+    /// Create a new requirement on a feature.
+    Create(RequirementCreateArgs),
     /// Edit an existing requirement.
     Edit(RequirementEditArgs),
     /// Post a comment on a requirement.
     Comment(RequirementCommentArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RequirementCreateArgs {
+    /// Parent feature reference (e.g. `TC-1234`) or ID.
+    #[arg(long = "on")]
+    pub feature: String,
+    #[arg(long)]
+    pub name: String,
+    #[arg(long, conflicts_with_all = ["description_file", "editor"])]
+    pub description: Option<String>,
+    #[arg(long = "description-file", conflicts_with_all = ["description", "editor"])]
+    pub description_file: Option<PathBuf>,
+    #[arg(long, conflicts_with_all = ["description", "description_file"])]
+    pub editor: bool,
+    #[arg(long)]
+    pub status: Option<String>,
+    #[arg(long = "assignee")]
+    pub assignee: Option<String>,
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    #[arg(short, long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Args)]
@@ -738,6 +763,9 @@ async fn dispatch_requirements(cli: &Cli, command: &RequirementsCommand) -> Resu
     match command {
         RequirementsCommand::Show { id } => {
             cmd::requirements::show(&client, id, cli.resolved_format()).await
+        }
+        RequirementsCommand::Create(args) => {
+            cmd::requirements::create(&client, args, cli.resolved_format()).await
         }
         RequirementsCommand::Edit(args) => {
             cmd::requirements::edit(&client, args, cli.resolved_format()).await

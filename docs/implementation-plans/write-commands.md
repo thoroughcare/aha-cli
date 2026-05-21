@@ -389,7 +389,8 @@ behaviour.
 - `cmd_features.rs::edit_feature_tag_merge_does_one_get_one_put` —
   wiremock counts both calls.
 - `cmd_todos.rs::done_sets_status_completed` — PUT body matches
-  `{"task": {"status": "completed"}}`.
+  `{"task": {"status": "complete"}}`. (Aha! rejects `"completed"` —
+  empirically confirmed via `examples/probe_task_status.rs`.)
 - `cmd_write.rs::no_tty_no_yes_bails` — verify the safety rail.
 - `cmd_write.rs::editor_path_uses_env_editor` — fake `$EDITOR` with a
   shell script that writes a known string into the tempfile.
@@ -433,6 +434,26 @@ behaviour.
    429 retry middleware is *not* applied to writes — only GET (we
    should add an explicit guard so a future change doesn't quietly
    start retrying mutating verbs).
+
+## Known-broken APIs
+
+- **`PUT /tasks/<id>` silently no-ops `task.status`.** Confirmed live
+  on 2026-05-21 against `tcare.aha.io`: the server returns 200 OK and
+  accepts the value `"complete"` / `"pending"` (rejects `"completed"`
+  with 400), but a follow-up GET shows `status` unchanged. Sub-resource
+  candidates (`POST /tasks/:id/complete`, `…/done`) return 404. `PATCH`
+  with the same body has the same 200-but-no-effect behavior. The
+  `aha-mcp` service models the same broken endpoint and presumably has
+  the same bug.
+
+  Mitigation: `todos done` / `reopen` / `todos edit --status` re-GET
+  the task after the PUT and surface a clear error when the server
+  silently ignored the write. The commands stay in the surface because
+  Aha! may fix the API; if/when they do, the verify step naturally
+  starts succeeding without code changes.
+
+  Probe: `cargo run --example probe_task_status -- <task-id>` against
+  any live task.
 
 ## Risks
 

@@ -15,21 +15,50 @@ cargo install --path .
 
 (Brew tap formula and pre-built release binaries land later.)
 
-## Quickstart
+## Authentication
+
+Every command (including read-only `list` / `show`) needs a personal
+API token. **Generate one before doing anything else:**
+
+> https://<your-subdomain>.aha.io/settings/personal/developer
+
+The CLI looks for credentials in this order:
+
+1. `--token` / `--subdomain` flags (rarely used directly).
+2. `AHA_TOKEN` + `AHA_COMPANY` env vars — the recommended setup for
+   scripts, CI, and one-off shells.
+3. A `.netrc` entry written by `aha auth login --with-token`.
+
+Pick one. Env vars and `.netrc` can coexist; the env vars win when
+both are set.
+
+### Option A — env vars (recommended for scripts)
 
 ```sh
-# Generate a personal API token at:
-#   https://<your-subdomain>.aha.io/settings/personal/developer
-# Then save it (the token is read from stdin so it never lands in shell history):
-printf '%s' "$TOKEN" | aha auth login --with-token --subdomain tcare
+export AHA_COMPANY=tcare
+export AHA_TOKEN='aha_pat_...'   # keep this out of shell history!
 
 aha auth check
-aha backlog
+```
+
+### Option B — persist to `.netrc` once
+
+```sh
+printf '%s' "$AHA_TOKEN" | aha auth login --with-token --subdomain tcare
+aha auth check
 ```
 
 The interactive browser-based OAuth flow (`aha auth login` without
-`--with-token`) is wired in once an OAuth app is registered on the Aha!
+`--with-token`) lands once an OAuth app is registered on the Aha!
 account; for now `--with-token` is the supported path.
+
+## Quickstart
+
+```sh
+# After authenticating (see above):
+aha auth check
+aha backlog
+```
 
 ## Commands
 
@@ -73,6 +102,14 @@ sending), `--yes` / `-y` (skip the TTY prompt), and one of
 `--body / --body-file <path|-> / --editor` for free-form bodies.
 Non-TTY shells must pass `--yes` explicitly — agents can't write
 without opting in.
+
+> **Known Aha! API limitation: to-do status is effectively read-only.**
+> `PUT /tasks/<id>` silently no-ops `task.status` — the server returns
+> 200 OK but the state never moves. `aha todos done` / `reopen` and
+> `aha todos edit --status` GET the task after the PUT and surface a
+> clear error in this case. Use the Aha! web UI to flip a to-do's
+> state until Aha! fixes the API (probed 2026-05-21 with
+> `examples/probe_task_status.rs`).
 
 Run `aha <command> --help` for full details.
 

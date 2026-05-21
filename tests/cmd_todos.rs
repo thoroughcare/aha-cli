@@ -101,7 +101,7 @@ async fn todos_show_surfaces_body_and_attachments() {
 }
 
 #[tokio::test]
-async fn todos_done_sets_status_completed() {
+async fn todos_done_sets_status_completed_when_aha_persists() {
     let home = tempfile::tempdir().unwrap();
     write_creds(home.path());
     let server = MockServer::start().await;
@@ -109,10 +109,20 @@ async fn todos_done_sets_status_completed() {
     Mock::given(method("PUT"))
         .and(path("/tasks/t1"))
         .and(body_json(serde_json::json!({
-            "task": {"status": "completed"}
+            "task": {"status": "complete"}
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "task": {"id": "t1", "name": "x", "status": "completed"}
+            "task": {"id": "t1", "name": "x", "status": "complete"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // Defensive GET to confirm status actually flipped (Aha! has been seen
+    // returning 200 on PUT while silently no-op'ing the status field).
+    Mock::given(method("GET"))
+        .and(path("/tasks/t1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "complete"}
         })))
         .expect(1)
         .mount(&server)
@@ -130,6 +140,41 @@ async fn todos_done_sets_status_completed() {
 }
 
 #[tokio::test]
+async fn todos_done_bails_when_aha_silently_no_ops_status() {
+    let home = tempfile::tempdir().unwrap();
+    write_creds(home.path());
+    let server = MockServer::start().await;
+
+    Mock::given(method("PUT"))
+        .and(path("/tasks/t1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "pending"}
+        })))
+        .mount(&server)
+        .await;
+    // Post-PUT verify GET returns the old status — Aha! ignored the write.
+    Mock::given(method("GET"))
+        .and(path("/tasks/t1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "pending"}
+        })))
+        .mount(&server)
+        .await;
+
+    Command::cargo_bin("aha")
+        .unwrap()
+        .env("HOME", home.path())
+        .env("AHA_BASE_URL", server.uri())
+        .env_remove("AHA_TOKEN")
+        .env_remove("AHA_COMPANY")
+        .args(["todos", "done", "t1", "--yes"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("status is still `pending`"))
+        .stderr(predicate::str::contains("known Aha! API limitation"));
+}
+
+#[tokio::test]
 async fn todos_reopen_sets_status_pending() {
     let home = tempfile::tempdir().unwrap();
     write_creds(home.path());
@@ -140,6 +185,14 @@ async fn todos_reopen_sets_status_pending() {
         .and(body_json(serde_json::json!({
             "task": {"status": "pending"}
         })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "task": {"id": "t1", "name": "x", "status": "pending"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/tasks/t1"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "task": {"id": "t1", "name": "x", "status": "pending"}
         })))

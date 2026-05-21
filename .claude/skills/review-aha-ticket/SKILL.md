@@ -33,17 +33,24 @@ If no argument is given, ask for one before proceeding.
 
 ## Phase 2: Ensure the `aha` CLI is Authenticated
 
+> **A personal API token is required.** The `aha` CLI is *not* useable without
+> one — there's no anonymous read mode. If the user hasn't generated and stored
+> one yet, point them at
+> https://tcare.aha.io/settings/personal/developer first, then come back.
+
 The CLI binary is `aha` (Rust binary at `~/.cargo/bin/aha`). It resolves credentials in
 this order — **first hit wins**:
 
 1. `--token` / `--subdomain` flags
-2. `AHA_TOKEN` / `AHA_COMPANY` env vars
+2. `AHA_TOKEN` / `AHA_COMPANY` env vars (exported in the shell or pulled in via
+   `set -a; source /path/to/.env; set +a`)
 3. `~/.netrc` entry written by `aha auth login` (the persistent default)
 
 **Default behaviour: invoke `aha` bare and let the CLI resolve from `~/.netrc`.**
 No env sourcing, no `AHA_COMPANY=tcare` prefix — the netrc entry carries both the
 subdomain (encoded in the host) and the token. Only fall back to `.env`/env vars
-if the netrc has no entry and writing one isn't appropriate (e.g. transient CI).
+if the netrc has no entry and writing one isn't appropriate (e.g. transient CI,
+exported `AHA_TOKEN` in the user's existing shell session).
 
 ### If the CLI errors out
 

@@ -1,8 +1,8 @@
 use anyhow::Result;
 
-use crate::cli::{RequirementCommentArgs, RequirementEditArgs};
+use crate::cli::{RequirementCommentArgs, RequirementCreateArgs, RequirementEditArgs};
 use crate::client::models::Requirement;
-use crate::client::resources::RequirementUpdate;
+use crate::client::resources::{RequirementCreate, RequirementUpdate};
 use crate::client::AhaClient;
 use crate::cmd::write::{confirm, dry_run_preview, BodySource, Confirm, ConfirmOpts};
 use crate::output::{render_one, OutputFormat};
@@ -12,6 +12,53 @@ use super::status_label;
 pub async fn show(client: &AhaClient, id: &str, format: OutputFormat) -> Result<()> {
     let r = client.get_requirement(id).await?;
     render_one(format, &kv_for(&r), &r)
+}
+
+pub async fn create(
+    client: &AhaClient,
+    args: &RequirementCreateArgs,
+    format: OutputFormat,
+) -> Result<()> {
+    let description = BodySource::from_flags(
+        args.description.clone(),
+        args.description_file.clone(),
+        args.editor,
+        None,
+    )
+    .map(|src| src.resolve())
+    .transpose()?;
+
+    let body = RequirementCreate {
+        name: &args.name,
+        description: description.as_deref(),
+        workflow_status: args.status.as_deref(),
+        assigned_to_user: args.assignee.as_deref(),
+    };
+
+    let preview = dry_run_preview(
+        "POST",
+        &format!("/features/{}/requirements", args.feature),
+        &serde_json::json!({ "requirement": &body }),
+    );
+    let opts = ConfirmOpts {
+        summary: &format!(
+            "create requirement '{}' on feature {}?",
+            args.name, args.feature
+        ),
+        preview: &preview,
+        dry_run: args.dry_run,
+        yes: args.yes,
+    };
+    if confirm(&opts)? == Confirm::DryRun {
+        return Ok(());
+    }
+
+    let created = client.create_requirement(&args.feature, &body).await?;
+    eprintln!(
+        "Created requirement {} (id={}) on feature {}",
+        created.reference_num, created.id, args.feature
+    );
+    render_one(format, &kv_for(&created), &created)
 }
 
 pub async fn edit(

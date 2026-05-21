@@ -1,15 +1,17 @@
 # Write / edit commands — implementation plan
 
-The v0.1 surface is read-only by design (see
-[`v0.1-read-only.md`](v0.1-read-only.md)). The deferred work is the
-write path: creating and updating features, comments, requirements,
-and todos. The aha-mcp service layer
-(`../aha-mcp/src/services/aha-service.ts`) already implements these
-against the same API; this plan ports that shape into the CLI on top
-of the foundations we now have (`AhaClient`, models, 429 retry,
-wiremock-driven tests, `OutputFormat`).
+The v0.1 surface (see [`v0.1-read-only.md`](v0.1-read-only.md))
+shipped read-only by design. This plan covers the write path —
+creating and updating features, requirements, todos, and comments —
+mirroring the aha-mcp service layer
+(`../aha-mcp/src/services/aha-service.ts`) so the two tools stay
+interchangeable.
 
-Keep this doc accurate as the work lands.
+The bulk of the design here is now **implemented** (commits
+`1fc9c3e` + `971aaa9`); the **Status** section at the end is the
+source of truth for what's shipped vs. still ahead. Use the design
+sections to understand *why* the surface looks the way it does and
+to keep it that way as it evolves.
 
 ## Scope
 
@@ -23,6 +25,7 @@ out of scope.
 | `aha features create --product <P> --name <N>`   | `POST /products/<P>/features`                       |
 | `aha features edit <REF> [field flags]`          | `PUT  /features/<REF>`                              |
 | `aha features comment <REF>`                     | `POST /features/<REF>/comments`                     |
+| `aha requirements create --feature <REF> --name <N>` | `POST /features/<REF>/requirements`             |
 | `aha requirements edit <REF> [field flags]`      | `PUT  /requirements/<REF>`                          |
 | `aha requirements comment <REF>`                 | `POST /requirements/<REF>/comments`                 |
 | `aha todos create --on <ref> --name <N>`         | `POST /tasks`                                       |
@@ -35,9 +38,6 @@ Explicitly out of scope for the first cut:
   `DELETE /requirements/...`). The API supports them but the blast
   radius is high; defer until there's demand and a confirmation UX
   worked out.
-- Creating requirements from scratch. Requirements are almost always
-  spawned from a feature in the Aha! UI; expose the edit path now and
-  add `requirements create --on <feature>` when someone asks.
 - Releases / epics / ideas writes. Not in MCP, no clear demand.
 - Attachments upload. Separate body of work (multipart), not blocked
   on this plan.
@@ -300,66 +300,55 @@ Reference prefixes encode the parent type: `TC-1234` is a feature,
 Implement a small parser; surface a clear error if the user supplied
 something ambiguous (a numeric id without `--on-type`).
 
-## Phase plan
+## Status
 
-Each phase is shippable on its own behind no flag — they each add a
-command and don't touch the read path.
+The bulk of this plan shipped in commits `1fc9c3e` ("Add write
+commands: features/requirements/todos create, edit, comment") and
+`971aaa9` ("Fix write commands found broken in live smoke test"),
+and was lightly retro-documented after the fact. Use this section
+as the source of truth for what's in vs. still ahead — the design
+sections above describe the shape on disk today unless flagged
+otherwise.
 
-### Phase 1 — client plumbing (~2 hours)
+### Shipped
 
-- `post_json` / `put_json` on `AhaClient` + retry passthrough.
-- Request structs (`FeatureCreate`, `FeatureUpdate`, `TodoCreate`,
-  `TodoUpdate`, `TodoStatus` enum).
-- 422 / 404 error mapping with regression tests.
-- `cmd::write` module: body resolution (`--body` / `--body-file` /
-  `--editor`), confirm helper, dry-run printer.
+- Client plumbing: `post_json` / `put_json` on `AhaClient`, request
+  structs (`FeatureCreate`, `FeatureUpdate`, `RequirementCreate`,
+  `RequirementUpdate`, `TodoCreate`, `TodoUpdate`), and 422 / 404
+  error mapping.
+- `src/cmd/write.rs` — shared body resolution (`--body` /
+  `--body-file` / `--editor`), TTY confirm, `--dry-run`.
+- Retry middleware already guards `POST` against accidental
+  re-issue (`src/client/retry.rs:77,132`) — risk in the original
+  plan is closed.
+- Commands:
+  - `aha features create / edit / comment` (with `--add-tag` /
+    `--remove-tag` tag-merge).
+  - `aha requirements create / edit / comment`.
+  - `aha todos create / edit / done / reopen`.
+- Tests: `tests/cmd_write.rs` plus write cases folded into
+  `tests/cmd_features.rs` and `tests/cmd_todos.rs`.
+- Docs: README "Write commands" section, recipes in
+  `docs/recipes.md`.
 
-### Phase 2 — comments (~1 hour, ships first)
+### Still ahead
 
-Lowest-risk write — single text body, no field merging.
+These are open or deferred — none are blocking but each is a real
+follow-up:
 
-- `aha features comment <REF>`, `aha requirements comment <REF>`.
-- Stderr success line, stdout returns the created comment.
-- wiremock tests for happy path + 422 surfacing + dry-run no-call.
-
-### Phase 2.5 — requirements edit (~2 hours)
-
-Same shape as features-edit but a smaller field set and no tag
-plumbing — a good warm-up before tackling the full features-edit
-flow. Editing requirement bodies is a real workflow (acceptance
-criteria refinement happens directly on the requirement, not on the
-parent feature).
-
-- `aha requirements edit <REF>`.
-- Default `--editor` invocation pre-fills with the existing
-  `description.body` so users don't accidentally clobber a long
-  acceptance-criteria block.
-- Wiremock tests cover: description-only edit, status-only edit,
-  dry-run no-call, empty-after-trim aborts.
-
-### Phase 3 — todos (~half day)
-
-- `create`, `edit`, `done`, `reopen`.
-- `--on` parser (covers all four taskable types).
-- Tests cover: status round-trip, edit-with-empty-args no-ops with a
-  clear message rather than firing a meaningless PUT.
-
-### Phase 4 — features (~half day)
-
-- `create`, `edit` with the tag-merge semantics above.
-- Tests cover: tag replace vs add/remove (fetch-then-write), default
-  editor pre-fills the existing description on `edit`.
-
-### Phase 5 — polish (~couple of hours)
-
-- Recipes in `docs/recipes.md` for the common write flows.
-- README "Write commands" subsection mirroring the existing "Commands"
-  table.
-- Update `v0.1-read-only.md` "Future" section to point at this file.
-
-Total: **~1.5 dev days** for the whole write surface (the
-requirements-edit phase folds in cleanly between comments and todos
-without lengthening the overall timeline).
+- **Bulk `aha todos done <ID>...`** — open question in the original
+  plan; defer until the first user request.
+- **Workflow-status name vs id** — `--status "In progress"` is
+  documented to work via case-insensitive name match against the
+  feature's workflow; worth a live smoke test to confirm Aha!
+  accepts the name on the wire and to add a regression test.
+- **Empty-edit guard** — confirm `aha {features,requirements,todos}
+  edit <REF>` with no field flags bails clearly (no meaningless
+  PUT). Spot-check; add a test if missing.
+- **Deletes** (`features` / `requirements` / `tasks`) — deferred;
+  needs a confirmation UX before exposing.
+- **Attachments upload** — multipart, separate work, not blocked
+  on this plan.
 
 ## Testing
 

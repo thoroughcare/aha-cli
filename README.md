@@ -7,6 +7,14 @@ humans get tables, pipes and AI agents get JSON.
 
 ## Install
 
+If you have [asdf](https://asdf-vm.com/guide/getting-started.html) (most company repos do), one line gets you a working `aha` on PATH:
+
+```sh
+git clone https://github.com/thoroughcare/aha-cli && cd aha-cli && asdf install && cargo install --path .
+```
+
+Otherwise, follow the manual steps below.
+
 ### Toolchain
 
 The required Rust version is pinned in [`.tool-versions`](.tool-versions) (matches the
@@ -26,8 +34,8 @@ Otherwise install the version listed in `.tool-versions` via
 [rustup](https://rustup.rs/):
 
 ```sh
-rustup toolchain install 1.86.0
-rustup override set 1.86.0
+rustup toolchain install 1.95.0
+rustup override set 1.95.0
 ```
 
 ### Build

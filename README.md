@@ -10,7 +10,7 @@ humans get tables, pipes and AI agents get JSON.
 If you have [asdf](https://asdf-vm.com/guide/getting-started.html) (most company repos do), one line gets you a working `aha` on PATH:
 
 ```sh
-git clone https://github.com/thoroughcare/aha-cli && cd aha-cli && asdf install && cargo install --path . && asdf reshim rust
+git clone https://github.com/thoroughcare/aha-cli && cd aha-cli && asdf install && cargo install --path . --root ~/.local
 ```
 
 Otherwise, follow the manual steps below.

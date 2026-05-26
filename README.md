@@ -10,7 +10,7 @@ humans get tables, pipes and AI agents get JSON.
 If you have [asdf](https://asdf-vm.com/guide/getting-started.html) (most company repos do), one line gets you a working `aha` on PATH:
 
 ```sh
-git clone https://github.com/thoroughcare/aha-cli && cd aha-cli && asdf install && cargo install --path .
+git clone https://github.com/thoroughcare/aha-cli && cd aha-cli && asdf install && cargo install --path . && asdf reshim rust
 ```
 
 Otherwise, follow the manual steps below.
@@ -45,6 +45,10 @@ From this repo:
 ```sh
 cargo install --path .
 ```
+
+If you're using asdf, follow up with `asdf reshim rust` so the new
+`aha` binary gets a shim on PATH — otherwise it lands in
+`~/.asdf/installs/rust/<ver>/bin/` and `aha` won't resolve.
 
 (Brew tap formula and pre-built release binaries land later.)
 

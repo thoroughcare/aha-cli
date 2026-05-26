@@ -7,6 +7,31 @@ humans get tables, pipes and AI agents get JSON.
 
 ## Install
 
+### Toolchain
+
+The required Rust version is pinned in [`.tool-versions`](.tool-versions) (matches the
+`rust-version` in `Cargo.toml`). If you use [asdf](https://asdf-vm.com/) or
+[mise](https://mise.jdx.dev/), they'll pick it up automatically:
+
+```sh
+# asdf
+asdf plugin add rust
+asdf install
+
+# mise
+mise install
+```
+
+Otherwise install the version listed in `.tool-versions` via
+[rustup](https://rustup.rs/):
+
+```sh
+rustup toolchain install 1.86.0
+rustup override set 1.86.0
+```
+
+### Build
+
 From this repo:
 
 ```sh

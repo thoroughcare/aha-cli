@@ -2,7 +2,7 @@
 name = "aha-cli"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.95"
 description = "Command-line client for the Aha! API (ThoroughCare)"
 publish = false
 

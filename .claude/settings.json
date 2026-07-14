@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "thoroughcare": {
+      "source": { "source": "github", "repo": "thoroughcare/claude-plugins" }
+    }
+  },
+  "enabledPlugins": {
+    "skill-creator@thoroughcare": true
+  }
+}

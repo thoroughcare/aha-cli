@@ -5,6 +5,10 @@
     }
   },
   "enabledPlugins": {
+    "linear@thoroughcare": true,
+    "git-workflow@thoroughcare": true,
+    "bootstrap@thoroughcare": true,
+    "ci@thoroughcare": true,
     "skill-creator@thoroughcare": true
   }
 }

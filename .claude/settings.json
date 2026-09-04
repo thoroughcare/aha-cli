@@ -1,14 +1,1 @@
-{
-  "extraKnownMarketplaces": {
-    "thoroughcare": {
-      "source": { "source": "github", "repo": "thoroughcare/claude-plugins" }
-    }
-  },
-  "enabledPlugins": {
-    "linear@thoroughcare": true,
-    "git-workflow@thoroughcare": true,
-    "bootstrap@thoroughcare": true,
-    "ci@thoroughcare": true,
-    "skill-creator@thoroughcare": true
-  }
-}
+{}

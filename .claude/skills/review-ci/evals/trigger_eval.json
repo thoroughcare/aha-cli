@@ -1,0 +1,12 @@
+[
+  {"query": "Can you review our GitHub Actions workflows for best practices?", "should_trigger": true},
+  {"query": "Our CI workflows don't set any permissions — can you harden them?", "should_trigger": true},
+  {"query": "Add dependency caching and concurrency cancellation to our CI pipeline", "should_trigger": true},
+  {"query": "Set up a GitHub Actions CI workflow for this repo", "should_trigger": true},
+  {"query": "Are our GitHub Actions pinned securely? Check for supply-chain issues in CI", "should_trigger": true},
+  {"query": "Why is our CI so slow? Can you improve the workflow?", "should_trigger": true},
+  {"query": "The tests are failing on my pull request, get CI green", "should_trigger": false},
+  {"query": "Fix the failing RSpec spec that's breaking the build", "should_trigger": false},
+  {"query": "Write a unit test for the PatientController", "should_trigger": false},
+  {"query": "Rebase my feature branch onto main", "should_trigger": false}
+]

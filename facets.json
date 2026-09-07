@@ -1,0 +1,6 @@
+{
+  "manifestVersion": 0.2,
+  "facets": {
+    "thoroughcare-tooling": "github:thoroughcare/claude-plugins#facet-v0.1.0"
+  }
+}

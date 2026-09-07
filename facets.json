@@ -1,6 +1,66 @@
 {
   "manifestVersion": 0.2,
   "facets": {
-    "thoroughcare-tooling": "github:thoroughcare/claude-plugins#facet-v0.1.0"
+    "thoroughcare-tooling": {
+      "source": "github:thoroughcare/claude-plugins#facet-v0.1.0",
+      "materialization": {
+        "skills": {
+          "address-review-comments": {
+            "kind": "omitted"
+          },
+          "adversarial-qe": {
+            "kind": "omitted"
+          },
+          "adversarial-review": {
+            "kind": "omitted"
+          },
+          "audit-docs": {
+            "kind": "omitted"
+          },
+          "dd-apm": {
+            "kind": "omitted"
+          },
+          "dd-code-generation": {
+            "kind": "omitted"
+          },
+          "dd-debugger": {
+            "kind": "omitted"
+          },
+          "dd-docs": {
+            "kind": "omitted"
+          },
+          "dd-file-issue": {
+            "kind": "omitted"
+          },
+          "dd-logs": {
+            "kind": "omitted"
+          },
+          "dd-monitors": {
+            "kind": "omitted"
+          },
+          "dd-pup": {
+            "kind": "omitted"
+          },
+          "dd-symdb": {
+            "kind": "omitted"
+          },
+          "dd-triage-flaky-test": {
+            "kind": "omitted"
+          },
+          "dd-unblock-pr": {
+            "kind": "omitted"
+          },
+          "enforce-testid-convention": {
+            "kind": "omitted"
+          },
+          "mcp-builder": {
+            "kind": "omitted"
+          },
+          "slack-policy": {
+            "kind": "omitted"
+          }
+        }
+      }
+    }
   }
 }

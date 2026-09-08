@@ -48,7 +48,7 @@ If the description is vague, ask the user to give a concrete example of the last
 Evaluate which mechanism is the best fit to prevent recurrence:
 
 ### Option A: Add to an existing skill
-If the issue happens during a specific workflow that already has a skill, add a rule, reminder, or step to that skill's `SKILL.md`. If the workflow is covered by a **shared marketplace plugin** rather than a repo-local skill, fix it there instead — one edit reaches every repo, and a repo-local copy of a plugin-owned rule drifts. Check the installed plugins before adding to a local skill.
+If the issue happens during a specific workflow that already has a skill, add a rule, reminder, or step to that skill's `SKILL.md`. If the workflow is covered by a **shared facet skill** rather than a repo-local one, fix it there instead — one edit reaches every repo that bumps its pinned ref, and a repo-local copy of a facet-owned rule drifts. Shared and local skills sit side by side in `.claude/skills/`, so the directory doesn't tell you which is which: `facets.lock` does, and anything listed there is overwritten by the next `facet install`. Check it before editing a skill in place.
 
 ### Option B: Add to CLAUDE.md
 If the issue is a broad behavioral rule that should apply in all conversations (not just specific skills), add it to the project-level `CLAUDE.md` (which often `@`-imports `AGENTS.md`). (User-level `~/.claude/CLAUDE.md` only when the user explicitly directs you to — see the Phase 2 preamble.)
@@ -57,7 +57,7 @@ If the issue is a broad behavioral rule that should apply in all conversations (
 If the issue is a coding convention, pattern, gotcha, or working agreement that affects how code is written or how work is shipped (not just one skill's steps), add it to the appropriate section of `AGENTS.md`. This is also the home for a rule that **several skills depend on** — state it here once in full rather than in a doc the skills reference.
 
 ### Option D: Create a new skill
-If the issue describes a workflow that should be automated and no existing skill covers it, create a new skill in `.claude/skills/<name>/SKILL.md`. Include YAML frontmatter with a `description` (with TRIGGER/SKIP language) so Claude can auto-invoke it when relevant. If the workflow isn't specific to this repo, propose it as a **marketplace plugin skill** instead.
+If the issue describes a workflow that should be automated and no existing skill covers it, create a new skill in `.claude/skills/<name>/SKILL.md`. Include YAML frontmatter with a `description` (with TRIGGER/SKIP language) so Claude can auto-invoke it when relevant. Give it a name no facet skill already uses, or the next `facet install` replaces it. If the workflow isn't specific to this repo, propose it as a **shared facet skill** instead.
 
 ### Option E: Add to memory
 Only if the issue is **specific to this particular user** and not applicable to the wider team or project (e.g., personal workflow preferences, local environment quirks). Memory isn't committed to the repo, so if the fix would benefit other developers or agents working on this codebase, use one of the other options instead (CLAUDE.md, AGENTS.md, or a skill).

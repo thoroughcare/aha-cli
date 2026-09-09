@@ -10,7 +10,7 @@ Run it with skill-creator's `run_eval.py` (needs the `claude` CLI; best from an
 **interactive** Claude Code session — nested `claude -p` is too slow headless):
 
 ```
-SC=../../../../skill-creator/skills/skill-creator   # path to the skill-creator skill
+SC=../../skill-creator   # path to the skill-creator skill
 PYTHONPATH=$SC python -m scripts.run_eval \
   --eval-set trigger_eval.json \
   --skill-path .. \
@@ -18,5 +18,5 @@ PYTHONPATH=$SC python -m scripts.run_eval \
 ```
 
 Then feed the results JSON to `scripts/improve_description.py` to propose a
-sharper description. See `plugins/skill-creator/skills/skill-creator/SKILL.md`
+sharper description. See `skills/skill-creator/SKILL.md`
 (*Description Optimization*).

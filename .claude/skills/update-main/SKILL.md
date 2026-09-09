@@ -7,11 +7,10 @@ description: "Switch to the repo's default branch (usually main) and pull the
   current one. TRIGGER when: user asks to update main, switch to main, \"get
   latest from main\", \"pull main\", \"sync main\", \"get back on main\",
   \"checkout main and pull\", \"switch both to master\", asks to prune or clean
-  up merged branches, or types /git-workflow:update-main. ALSO run it unprompted
-  once a change is shipped (PR open, review requested) to land the working tree.
-  SKIP when: the user wants to rebase a feature branch onto main (use
-  update-branch), or they mean a specific non-default branch rather than the
-  repo's default."
+  up merged branches, or types /update-main. ALSO run it unprompted once a
+  change is shipped (PR open, review requested) to land the working tree. SKIP
+  when: the user wants to rebase a feature branch onto main (use update-branch),
+  or they mean a specific non-default branch rather than the repo's default."
 ---
 
 # Update Main

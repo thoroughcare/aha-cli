@@ -4,18 +4,17 @@ description: "Carry committed work the rest of the way to a review-requested PR:
   size the diff and split it along a layer seam if it's too large to review,
   push and verify the ref actually landed, open the PR (draft-first where the
   repo works that way), trigger the review, then hand the review round to
-  /code-review:address-review-comments and land every touched repo with
-  /git-workflow:update-main. Repo- and stack-agnostic — discovers the repo's
-  default branch, test gate, PR conventions and review-request mechanism rather
-  than assuming a toolchain. TRIGGER when: a change is committed and green and
-  needs to reach a reviewer — \"push this and open a PR\", \"ship it\", \"open
-  the PR\", \"request review for this\", \"is this PR too big / should I split
-  it\", or /git-workflow:ship-pr. ALSO run it unprompted once work is committed
-  and tests pass, whatever brought the change in (a ticket, a \"fix this\", a
-  review comment, a follow-up). SKIP when: nothing is committed yet, a local
-  test is genuinely failing (fix that first), or the PR is already open and the
-  task is working its review feedback (use
-  /code-review:address-review-comments)."
+  /address-review-comments and land every touched repo with /update-main. Repo-
+  and stack-agnostic — discovers the repo's default branch, test gate, PR
+  conventions and review-request mechanism rather than assuming a toolchain.
+  TRIGGER when: a change is committed and green and needs to reach a reviewer —
+  \"push this and open a PR\", \"ship it\", \"open the PR\", \"request review
+  for this\", \"is this PR too big / should I split it\", or /ship-pr. ALSO run
+  it unprompted once work is committed and tests pass, whatever brought the
+  change in (a ticket, a \"fix this\", a review comment, a follow-up). SKIP
+  when: nothing is committed yet, a local test is genuinely failing (fix that
+  first), or the PR is already open and the task is working its review feedback
+  (use /address-review-comments)."
 ---
 
 # Ship PR
@@ -182,7 +181,7 @@ and surface the problem, not a yes/no "shall I continue?" prompt.
 
 Once a review lands, the work of reading it, fixing each item, replying to every thread,
 un-drafting, and posting the review request belongs to
-**`/code-review:address-review-comments`** — it owns that loop (including the un-draft →
+**`/address-review-comments`** — it owns that loop (including the un-draft →
 final-review → post-the-request tail, and the non-testable fast path). Invoke it rather
 than re-deriving those steps here.
 
@@ -202,7 +201,7 @@ mis-reported as shipped:
 
 ## Phase 5: Land the working tree
 
-The sequence does not end at the un-draft. Run **`/git-workflow:update-main`**, which owns
+The sequence does not end at the un-draft. Run **`/update-main`**, which owns
 the rule (see its "Landing every repo after a ship"): it returns **every repo the change
 touched** to its default branch — not just the one you're standing in, which matters for
 work mirrored across sibling repos — and prunes local branches whose upstream is `[gone]`.
@@ -260,6 +259,32 @@ the thing directly — the reviews, the checks, the refs — so what you report 
 observation. Prefer polling that names every terminal state over one that greps for the
 happy path.
 
+Two mechanics make that reliable, and a waiter missing either can strand a session for hours:
+
+- **Bound the loop, and let it say "never".** Give every wait a maximum iteration count and,
+  on timeout, exit **non-zero naming what it was still waiting for** — an unbounded loop whose
+  predicate can never be satisfied never exits, so no notification fires and nothing re-invokes
+  you. Keep "**no rows matched**" distinct from "**still running**": a filter matching zero rows
+  is not a job in progress, and folding the two together is how a loop waits forever for
+  something that will never exist.
+- **Pair it with an independent deadline timer.** A bound only helps while the waiter is alive
+  and its predicate is the only thing wrong; it does nothing when the waiter dies, is killed, or
+  exits on a false positive. A separate command that does nothing but expire —
+  `sleep <deadline>; echo "deadline reached: <what you were waiting on>"` — fires regardless,
+  because it does not depend on the waiter being correct or even alive. It is not a poll: it
+  re-checks nothing and expires once.
+
+**Order the two deadlines, and count sleeps rather than iterations.** The timer must expire
+*after* the waiter's own bound, or it fires first and you lose the waiter's more specific
+message. And a loop of N iterations sleeps N-1 times, so `for i in $(seq 1 25) … sleep 60`
+times out at ~24 minutes, not 25 — set the bound off the work's *slow* case, not its typical
+one. A CI run that usually takes 20 minutes but varies with matrix and dialyzer will
+sometimes take 30, and a waiter that gives up at 24 reports a confident false timeout on a
+run that was about to pass.
+
+Use as many waiters and timers as the situation warrants. What matters is that something always
+wakes the session, not how few things are watching.
+
 **Anything you cannot read back is reported as unconfirmed.** A review-request webhook is
 the usual case: its `{"ok":true"}` and the notifier script's success line look identical
 whether the message rendered or was dropped for a bad payload. Confirm by eye in the channel,
@@ -272,7 +297,7 @@ or report it as **posted-but-unconfirmed** — never as done.
 - **Split before opening**, along a layer seam, each half green standalone (Phase 0).
 - **Verify the push landed by comparing refs** — hook output is not push success (Phase 1).
 - **A draft is not auto-reviewed**; trigger it or it never comes (Phase 3).
-- **Hand the review round to `/code-review:address-review-comments`**; don't re-derive it.
-- **End at the landing, not the un-draft** — `/git-workflow:update-main`, every touched repo.
+- **Hand the review round to `/address-review-comments`**; don't re-derive it.
+- **End at the landing, not the un-draft** — `/update-main`, every touched repo.
 - **Read the terminal state back before claiming it**; a draft is never "shipped".
 - Only pause for a real local test failure or a genuinely destructive git operation.

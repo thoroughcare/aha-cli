@@ -7,11 +7,11 @@ description: 'Interact with Linear.app issues via the `linear-cli` tool — view
   explicit confirmation. TRIGGER when: user asks to look at / list / search /
   create / update / comment on a Linear issue, references a Linear issue ID like
   `ENG-123` or a `linear.app/...` URL, says "what does ENG-123 say", "move
-  ENG-123 to In Progress", "file a Linear issue", or types /linear:linear
-  [args]. SKIP when: the work is tracked in a different system (e.g. Aha!, Jira,
-  GitHub Issues) — some repos use another tracker for product work, and Linear
-  IDs/URLs are the only signal this skill applies; or the user just wants a
-  plain git branch with no issue link.'
+  ENG-123 to In Progress", "file a Linear issue", or types /linear [args]. SKIP
+  when: the work is tracked in a different system (e.g. Aha!, Jira, GitHub
+  Issues) — some repos use another tracker for product work, and Linear IDs/URLs
+  are the only signal this skill applies; or the user just wants a plain git
+  branch with no issue link.'
 ---
 
 # Linear
@@ -195,7 +195,7 @@ Show the rendered comment body and wait for OK before posting.
   `linear-cli statuses list --team <KEY>` first; where there's more than one, set the state
   explicitly (3b) and assign separately (`--assignee me`). `--checkout` also fights a repo
   whose branch convention differs from the tracker's suggestion — see
-  `/git-workflow:update-branch`.
+  `/update-branch`.
 - `linear-cli issues close <ID>` — mark Done.
 - `linear-cli done` — mark the **current branch's** issue Done.
 - `linear-cli issues delete <ID>` / `archive <ID>` — destructive; always preview and

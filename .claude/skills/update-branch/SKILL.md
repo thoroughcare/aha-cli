@@ -7,10 +7,9 @@ description: "Get onto the right branch for a piece of work and bring it up to
   Optional \"manual rebase\" flag for interactive mode. TRIGGER when: user asks
   to rebase a branch, says \"the branch is behind main\", \"update this
   branch\", \"switch to the branch for <TICKET>\", \"start work on <TICKET>\",
-  or types /git-workflow:update-branch [PR# or ticket]. SKIP when: the branch
-  exists and is already up to date with its base (the skill detects this and
-  stops), or the user wants to get back on the default branch itself (use
-  update-main)."
+  or types /update-branch [PR# or ticket]. SKIP when: the branch exists and is
+  already up to date with its base (the skill detects this and stops), or the
+  user wants to get back on the default branch itself (use update-main)."
 ---
 
 # Update Branch

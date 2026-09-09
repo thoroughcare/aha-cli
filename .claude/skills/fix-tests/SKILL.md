@@ -7,8 +7,8 @@ description: "Fix failing CI tests for an existing pull request. Pulls the
   draft round — handing the un-draft to code-review:address-review-comments
   where that skill is available, or doing it directly. TRIGGER when: user says
   tests are failing/red on a PR, asks to fix CI failures, pastes a failed-test
-  list, asks \"why is CI failing\", or types /ci:fix-tests [PR#]. SKIP when:
-  tests pass locally and CI is green — there's nothing to fix."
+  list, asks \"why is CI failing\", or types /fix-tests [PR#]. SKIP when: tests
+  pass locally and CI is green — there's nothing to fix."
 ---
 
 # Fix Tests
@@ -62,7 +62,7 @@ the PR.
   so forgetting it strands the change.
 - **`WAS_DRAFT: true`** — the PR was *already* a draft and you changed nothing. **Do not
   un-draft it.** It may be an unfinished draft, or another skill's round in progress (this
-  skill is commonly invoked from inside `/code-review:address-review-comments`, which
+  skill is commonly invoked from inside `/address-review-comments`, which
   drafts for the duration of its own round). Un-drafting there announces someone else's
   half-finished work to reviewers. Leave the state alone and say so in your report.
 
@@ -121,7 +121,7 @@ Present all findings to the user before proceeding.
 ### 3a. Prepare a clean working tree
 Make sure the working tree is clean before switching. If the repo documents a
 procedure for restoring tracked files or local dev-file overrides (check its
-`AGENTS.md`/`CLAUDE.md`, or `/git-workflow:update-main`'s Phase 2), follow it;
+`AGENTS.md`/`CLAUDE.md`, or `/update-main`'s Phase 2), follow it;
 otherwise:
 ```
 git stash --include-untracked   # only if you have local changes worth keeping
@@ -162,7 +162,7 @@ supports it — it's faster and shared setup/ordering effects surface.
 - Fix the implementation (not the tests, unless the tests themselves are wrong).
 - Apply the fixes directly without asking for confirmation, even when there are
   several or when one fix touches a file unrelated to the headline failure. The
-  user opted in by running `/ci:fix-tests`. State the plan in a sentence or two
+  user opted in by running `/fix-tests`. State the plan in a sentence or two
   as you proceed, but do not pause for approval before editing.
 
 ### 4c. Add a regression test
@@ -258,7 +258,7 @@ which requires steps 1 and 2. A draft is never auto-reviewed and never reported 
 3. **Take it out of draft — only if `WAS_DRAFT` (1d) was false.** If the PR was already a
    draft when you arrived, leave it: see 1d.
 
-   Otherwise **hand off to `/code-review:address-review-comments`**, which owns the un-draft →
+   Otherwise **hand off to `/address-review-comments`**, which owns the un-draft →
    final-review → post-the-request tail. Prefer the handoff even when the PR looks clean: this
    skill has no phase for answering review findings, so un-drafting here fires an automatic
    review nobody in this skill will read — the exact state the lifecycle exists to prevent.
@@ -276,7 +276,7 @@ which requires steps 1 and 2. A draft is never auto-reviewed and never reported 
    The other skill gathers all three sources itself.
 
 **Four honest endings.** Three are terminal — CI green and handed off to
-`/code-review:address-review-comments` (the PR is still a draft *by design*, and that skill
+`/address-review-comments` (the PR is still a draft *by design*, and that skill
 owns taking it out); CI green with the PR un-drafted directly where no handoff is available;
 or CI green and the PR deliberately left as you found it (`WAS_DRAFT: true`). The fourth is a
 **named blocker** (a red check you didn't cause, an unmerged dependency) plus what unblocks
@@ -291,7 +291,7 @@ it to ready. A blocker is not a licence to abandon a PR in a state you created.
   make CI green.
 - **A PR with red CI is a draft** — 1d puts it back there so nobody reviews a branch
   you're rewriting. **This skill's own Phase 6** ends the round: it either hands the
-  un-draft to `/code-review:address-review-comments` or does it directly.
+  un-draft to `/address-review-comments` or does it directly.
 - **Only un-draft what you drafted.** If the PR was already a draft when you arrived
   (`WAS_DRAFT`), leave it — it may be someone else's unfinished round. And if you stop
   early after drafting, restore it or say so; never abandon a PR in a state you created.

@@ -14,8 +14,8 @@ description: "Review a repo's CI — its GitHub Actions workflows in
   workflow, set up CI for a repo, add caching/permissions/concurrency/timeouts,
   pin actions to SHAs, add or review a scheduled/cron workflow, review a shell
   script that CI runs, \"is our CI following best practices\", or \"why is CI
-  slow\"; or type /ci:review-ci. SKIP when: a test is red on a PR and they just
-  want it green — that is /ci:fix-tests, not this skill."
+  slow\"; or type /review-ci. SKIP when: a test is red on a PR and they just
+  want it green — that is /fix-tests, not this skill."
 ---
 
 # Review CI

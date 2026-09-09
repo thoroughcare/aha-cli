@@ -2,7 +2,7 @@
   "manifestVersion": 0.2,
   "facets": {
     "thoroughcare-tooling": {
-      "source": "github:thoroughcare/claude-plugins#facet-v0.1.0",
+      "source": "github:thoroughcare/claude-plugins#facet-v0.4.0",
       "materialization": {
         "skills": {
           "address-review-comments": {

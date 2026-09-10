@@ -1,0 +1,500 @@
+{
+  "lockfileVersion": 0.3,
+  "facets": {
+    "thoroughcare-tooling": {
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/thoroughcare/claude-plugins.git",
+        "commit": "cdef780d15a3919075a7b3975e3e137bc7edcd90"
+      },
+      "version": "0.4.0",
+      "integrity": "sha256:926cc1acbd3455a5701e7072d1264112a7d2fe204e8fbe60e906d538e318d419",
+      "assets": [
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "address-review-comments",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/address-review-comments/SKILL.md",
+              "integrity": "sha256:11e0ef1e82d07ba34c2e701b641005522c662760e2a2e9a5258922ac22440011"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "adversarial-qe",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/adversarial-qe/SKILL.md",
+              "integrity": "sha256:e0694b49fda3783e51c516504a92125dae3371de26d7b5083f067266568d398d"
+            },
+            {
+              "path": "skills/adversarial-qe/evals/README.md",
+              "integrity": "sha256:120358c07ed39cadf95c0f0d9e2192b6e57eb62c31c9cabeeee9e6347d8a58a5"
+            },
+            {
+              "path": "skills/adversarial-qe/evals/trigger_eval.json",
+              "integrity": "sha256:98d1680f95fe8676dc7d236fe5572a52315e104cf1cbfcc1abd76c635bba6d4f"
+            },
+            {
+              "path": "skills/adversarial-qe/references/parity-baseline.md",
+              "integrity": "sha256:b0a692c18e2073b2e11a0c8dab2bbfaf5f0b581a9b002f7708ee794d8e32f2f8"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "adversarial-review",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/adversarial-review/SKILL.md",
+              "integrity": "sha256:8b9c92175902d17e185555097fd78f9d9747b15c5a3e7638e4900d401a99aa16"
+            },
+            {
+              "path": "skills/adversarial-review/references/reviewing-a-skill-change.md",
+              "integrity": "sha256:bf7c7d8b66ddb34f4777fc00562af953a8eaa036dad143ce504b05312384e1bb"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "audit-docs",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/audit-docs/SKILL.md",
+              "integrity": "sha256:f29affae84817efeeeec7ea11e888005e70db47bee180fa6fe2a899b5c72813f"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "bootstrap",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/bootstrap/SKILL.md",
+              "integrity": "sha256:6917100247807aee1bb40f735b1c60b51f6666a2d2cd7e8e8f7e944dc3e5d1e4"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-apm",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-apm/SKILL.md",
+              "integrity": "sha256:344f05d54f34c2edf181f1d43d9832a51aae928382edf5e20f99998dcbc53fc2"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-code-generation",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-code-generation/SKILL.md",
+              "integrity": "sha256:aa3250576d56592eb8795648f8e7f2992c5340490e002cfd92eb081d986632f3"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-debugger",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-debugger/SKILL.md",
+              "integrity": "sha256:1959d3a98fe56d3fec72d48774a7b3403ef2e6e4b273a32c05b5d40f830eba2e"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-docs",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-docs/SKILL.md",
+              "integrity": "sha256:7186e4e71c4d14175bb1f41974e30f64a861072a82e7b197e69a1838645073d9"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-file-issue",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-file-issue/SKILL.md",
+              "integrity": "sha256:870aa7df23bc28efa314eb98d02b59c62b4d3196204444f5c202cf978c40072f"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-logs",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-logs/SKILL.md",
+              "integrity": "sha256:6f4233001e42c4dd6c9a9b5fc4ae3870fcd4f9d1cc7452a6f16101ad9d4a7bf8"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-monitors",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-monitors/SKILL.md",
+              "integrity": "sha256:05f2cbf8c6366912df8ca4d360f0645d2b61806bcc112c8fbf2b350b32a9b260"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-pup",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-pup/SKILL.md",
+              "integrity": "sha256:6906bb0f54b3785226d9e5a1f358c4f70231915312088bedeb35eafb3ad9da05"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-symdb",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-symdb/SKILL.md",
+              "integrity": "sha256:35c514f68f8fce7f59c7951b96b229ad12e3607f26e265eb48f777cea9af6811"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-triage-flaky-test",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-triage-flaky-test/SKILL.md",
+              "integrity": "sha256:c34f69ed5bc6188371e6af8373c00acb887bd2eb1435ade6ffb0f65f6f4d5651"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "dd-unblock-pr",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/dd-unblock-pr/SKILL.md",
+              "integrity": "sha256:7292340d0bfb0cde81eadc60a31882c804edaf5a0da0e6a43867114d7c346d8b"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "enforce-testid-convention",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/enforce-testid-convention/SKILL.md",
+              "integrity": "sha256:01c2efdadf1df45227145013a358368f2c046ddc881646824ec282ebc4ab30b9"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "fix-tests",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/fix-tests/SKILL.md",
+              "integrity": "sha256:95a52cd3c3239297a340aece1bb0c25cd81697440b7228a77787dafc1d8d16e2"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "linear",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/linear/SKILL.md",
+              "integrity": "sha256:823593a419567b6d83d36af50a16be4ff2611ff96c53aabfc72453f74d5f10e9"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "mcp-builder",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/mcp-builder/SKILL.md",
+              "integrity": "sha256:0f4592dcb53cf2b5d6b7febee6b4152018b565551a1c29e3c612f57b218ab295"
+            },
+            {
+              "path": "skills/mcp-builder/reference/evaluation.md",
+              "integrity": "sha256:8c99479f8a2d22a636c38e274537aac3610879e26f34e0709825077c4576f427"
+            },
+            {
+              "path": "skills/mcp-builder/reference/mcp_best_practices.md",
+              "integrity": "sha256:80fb4369a349447cf18ecdd7494fe7938b6065377e9f08c077cec411093a3007"
+            },
+            {
+              "path": "skills/mcp-builder/reference/node_mcp_server.md",
+              "integrity": "sha256:c3ba35a4f599dd53be9c6555ae72c19a7bf412cd5426576c2c08d42755482c66"
+            },
+            {
+              "path": "skills/mcp-builder/reference/python_mcp_server.md",
+              "integrity": "sha256:2da52f77e675191014ca2e146a4b95aa04d0ca7dd7e2b100322df15ade685e80"
+            },
+            {
+              "path": "skills/mcp-builder/scripts/connections.py",
+              "integrity": "sha256:9403668a2041568772082a8b334122c1f88daf0541fb393af4522d0094a47a6e"
+            },
+            {
+              "path": "skills/mcp-builder/scripts/evaluation.py",
+              "integrity": "sha256:49ed1d17cdce5da101b210197740713f49b935c29d4f339542a14b132658e6f7"
+            },
+            {
+              "path": "skills/mcp-builder/scripts/example_evaluation.xml",
+              "integrity": "sha256:9272b348ddcc4b06ba562367ccd0770e018158c0068ac5116d5e34aaeff8777a"
+            },
+            {
+              "path": "skills/mcp-builder/scripts/requirements.txt",
+              "integrity": "sha256:d5d7558b2368ecea9dfeed7d1fbc71ee9e0750bebd1282faa527d528a344c3c7"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "review-ci",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/review-ci/SKILL.md",
+              "integrity": "sha256:4e364253159061e17ad96b7102e0d1a40e87fb97b9a41360a1341cb710d7c5d6"
+            },
+            {
+              "path": "skills/review-ci/evals/README.md",
+              "integrity": "sha256:331524917bf507a769e7de98ea27735771575e5b0e4025e327259681efe6c8f5"
+            },
+            {
+              "path": "skills/review-ci/evals/trigger_eval.json",
+              "integrity": "sha256:642c31e44d57ebc7baa052d53be1e56aa2dccac7226135119900bce00780ff56"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "ship-pr",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/ship-pr/SKILL.md",
+              "integrity": "sha256:59fc5f043e74938b0c68243edb85e2a1f7e27044efa6968c6ef54ca7417091db"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "skill-creator",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/skill-creator/SKILL.md",
+              "integrity": "sha256:dcd4803e61e913e6fc27294184cd3a71f09f5e924ff20c8a9a20173e7b3c2bcf"
+            },
+            {
+              "path": "skills/skill-creator/agents/analyzer.md",
+              "integrity": "sha256:bf68f4cac5a56c673a928c2e6d619586c5b93ea364026ab37547772cb45a663a"
+            },
+            {
+              "path": "skills/skill-creator/agents/comparator.md",
+              "integrity": "sha256:fe1fc9787c495d864c5d6eada47396478572325fde1b33a96d78bf4b849b7a3e"
+            },
+            {
+              "path": "skills/skill-creator/agents/grader.md",
+              "integrity": "sha256:57134da0c1a4eea33fbd74a1c9c44aa814f07d6bc64de303edb586f941e5d21a"
+            },
+            {
+              "path": "skills/skill-creator/assets/eval_review.html",
+              "integrity": "sha256:ce477dcc74dc1c0d1d3352646a79167b5a63634e936b1019160025065974e452"
+            },
+            {
+              "path": "skills/skill-creator/eval-viewer/generate_review.py",
+              "integrity": "sha256:fc9d1b9243fe5ab6012ebd579bd76d0035de1b79fd3b969de114defab26478fb"
+            },
+            {
+              "path": "skills/skill-creator/eval-viewer/viewer.html",
+              "integrity": "sha256:a53213426ee1100441d701a3a0d49cda7a842f992d2c36463f4d3cc0258575fa"
+            },
+            {
+              "path": "skills/skill-creator/references/schemas.md",
+              "integrity": "sha256:8e8876180a8989b406a4d3edddf875b04cdfd5805cc8616686d552b11ce4455f"
+            },
+            {
+              "path": "skills/skill-creator/scripts/__init__.py",
+              "integrity": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            },
+            {
+              "path": "skills/skill-creator/scripts/aggregate_benchmark.py",
+              "integrity": "sha256:123ef128ea5ccc01a4b1ac212ef5567f21e9c13d3d240609780beeb3200c49aa"
+            },
+            {
+              "path": "skills/skill-creator/scripts/generate_report.py",
+              "integrity": "sha256:13df7118a3c50c83c4c3250a606d5f2b20b25a3d44cbc392b3d669ec75281453"
+            },
+            {
+              "path": "skills/skill-creator/scripts/improve_description.py",
+              "integrity": "sha256:87d864570220b699fac52da309d2d6efdb060647bfebc74f768128e646accf80"
+            },
+            {
+              "path": "skills/skill-creator/scripts/package_skill.py",
+              "integrity": "sha256:1a33059b0db1ef73375d46d513e5ea81369d2e8838c970597b0d52ddef8d1c0f"
+            },
+            {
+              "path": "skills/skill-creator/scripts/quick_validate.py",
+              "integrity": "sha256:67cf5703402013936c8fb75ad6a1afecd8841d45cc5e606b634eb05825fde365"
+            },
+            {
+              "path": "skills/skill-creator/scripts/run_eval.py",
+              "integrity": "sha256:43e3b8f80dbf69c343967ba77e268fae991d9fa3ed68b32a0ff02532cd48657f"
+            },
+            {
+              "path": "skills/skill-creator/scripts/run_loop.py",
+              "integrity": "sha256:7bd6f674203168520517eec94c55f493c0d154339b061b4d7c0f0dad187d0f21"
+            },
+            {
+              "path": "skills/skill-creator/scripts/utils.py",
+              "integrity": "sha256:3af8ae62c40c73ab712207436a0d9a981e845f25c5a7040229eb189cc8e45bb1"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "slack-policy",
+          "materialization": {
+            "kind": "omitted"
+          },
+          "files": [
+            {
+              "path": "skills/slack-policy/SKILL.md",
+              "integrity": "sha256:22c51dd04a94e8b12644604f4b6f064d6d2ee479e39533dc9fd5f9b9d7d15881"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "update-branch",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/update-branch/SKILL.md",
+              "integrity": "sha256:47a359706b58000d5417d18fe76154b7908bdb40ab31336bc64796ebf82f9643"
+            }
+          ]
+        },
+        {
+          "scope": "project",
+          "type": "skill",
+          "name": "update-main",
+          "materialization": {
+            "kind": "authored"
+          },
+          "files": [
+            {
+              "path": "skills/update-main/SKILL.md",
+              "integrity": "sha256:0a48e6d02fdf95b1ae89061728be8cf5eb4cfdcd213a332209b886b16d6126a7"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

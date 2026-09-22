@@ -164,8 +164,11 @@ jobs:
           # `source` key. A reader that assumes one form misreads the other, and
           # a *writer* that does destroys the repo's omission set — so both the
           # read here and the write below handle the two shapes.
-          current_source="$(jq -er --arg f "${FACET_NAME}" \
-            '.facets[$f] | if type == "string" then . else .source end' facets.json)" || exit
+          if ! current_source="$(jq -er --arg f "${FACET_NAME}" \
+                '.facets[$f] | if type == "string" then . else .source end' facets.json)"; then
+            echo "::error::facets.json has no '${FACET_NAME}' under .facets — this repo declares some other facet, or the manifest is malformed. Every other failure here names itself; this one used to exit on jq's message alone."
+            exit 1
+          fi
           current_tag="${current_source##*#}"
           if [ "${current_tag}" = "${current_source}" ]; then
             echo "::error::The ${FACET_NAME} source in facets.json carries no '#<ref>': ${current_source}"
@@ -383,7 +386,18 @@ jobs:
             exit 1
           fi
 
-          resolved="$(jq -r --arg f "${FACET_NAME}" '.facets[$f].source.commit' facets.lock)" || exit
+          # `jq -r` prints the literal string `null` and exits 0 when the path
+          # is absent, so `|| exit` cannot see it — and a lockfile whose shape
+          # changed under a future CLI would put `(null)` into the commit
+          # message and the PR body rather than failing the job. `-e` makes an
+          # absent path exit 1; the string check catches an explicit JSON null.
+          # The `[ ! -f facets.lock ]` test above only covers "no lockfile at
+          # all", not "a lockfile that doesn't say what we expect".
+          resolved="$(jq -er --arg f "${FACET_NAME}" '.facets[$f].source.commit' facets.lock)" || resolved=""
+          if [ -z "${resolved}" ] || [ "${resolved}" = "null" ]; then
+            echo "::error::facets.lock has no .facets[\"${FACET_NAME}\"].source.commit. The install wrote a lockfile this workflow cannot read — most likely the facet CLI changed its format, so check FACET_CLI_VERSION (${FACET_CLI_VERSION}) against what it writes."
+            exit 1
+          fi
           echo "resolved ${TARGET_TAG} to ${resolved}"
           echo "commit=${resolved}" >> "${GITHUB_OUTPUT}"
 
@@ -642,8 +656,21 @@ jobs:
             [ -n "${number}" ] || continue
             tag="${head#"${BRANCH_PREFIX}"}"
 
+            # Deliberately the strict release pattern, not the wider shape
+            # `workflow_dispatch` accepts. Two different branches fail it, and
+            # only the first is "not ours": a human working under this prefix,
+            # and a **prerelease this workflow itself opened** when someone
+            # dispatched one on purpose.
+            #
+            # The second is left alone knowingly. `sort -V` orders
+            # `facet-v0.6.0` *before* `facet-v0.6.0-rc.1` — the opposite of
+            # semver — so admitting prereleases here would let a dispatched RC
+            # decide it superseded the real release and close its PR. Getting
+            # that wrong is worse than not tidying up, so a dispatched
+            # prerelease branch stays outside the automation's reach and
+            # whoever dispatched it closes it by hand.
             if ! printf '%s' "${tag}" | grep -qE '^facet-v[0-9]+\.[0-9]+\.[0-9]+$'; then
-              echo "::notice::Leaving #${number} (${head}) alone: its suffix is not a release tag, so this workflow did not open it."
+              echo "::notice::Leaving #${number} (${head}) alone: not a release tag, so it is either a human's branch or a deliberately dispatched prerelease. Neither is this workflow's to close."
               continue
             fi
 
@@ -699,6 +726,9 @@ jobs:
             [ "${head}" = "${BRANCH}" ] && continue
             tag="${head#"${BRANCH_PREFIX}"}"
 
+            # Same strict pattern, same two exclusions, same reason — see the
+            # supersede step above. A dispatched prerelease branch is never
+            # swept, and that is the intended outcome rather than an oversight.
             printf '%s' "${tag}" | grep -qE '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' || continue
 
             oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)" || exit

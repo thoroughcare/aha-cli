@@ -419,6 +419,39 @@ jobs:
           echo "resolved ${TARGET_TAG} to ${resolved}"
           echo "commit=${resolved}" >> "${GITHUB_OUTPUT}"
 
+          # `/update-skills` calls this step "Confirm the tree is sound" and
+          # treats it as part of the bump; the automated version skipped it, so
+          # a reviewer of a bot PR had no equivalent signal that the tree
+          # `facet install` just wrote is actually complete. Only `tcare` ships
+          # `bin/check-skills`, so this runs where it exists and says so where
+          # it does not — the file stays byte-identical either way.
+          #
+          # It deliberately does not gate the job: the script never exits
+          # non-zero by design ("a skills problem is worth surfacing, not worth
+          # refusing to start a session over"), and its verdict is more useful
+          # in front of a reviewer than as a red run.
+          if [ -x bin/check-skills ]; then
+            skills_check="$(bin/check-skills --verbose 2>&1)" || skills_check="bin/check-skills exited non-zero: ${skills_check}"
+            {
+              echo "### Shared-skills check"
+              echo
+              echo '```'
+              printf '%s\n' "${skills_check}"
+              echo '```'
+            } >> "${GITHUB_STEP_SUMMARY}"
+            # One line for the PR body; the full text is in the job summary
+            # above. A clean run is a single line anyway, so a multi-line
+            # result is itself the signal that something needs reading.
+            first="$(printf '%s\n' "${skills_check}" | head -n 1)"
+            lines="$(printf '%s\n' "${skills_check}" | grep -c . || true)"
+            if [ "${lines}" -gt 1 ]; then
+              first="${first} … and more — read the job summary."
+            fi
+          else
+            first="not run — this repo ships no bin/check-skills."
+          fi
+          echo "skills_check=${first}" >> "${GITHUB_OUTPUT}"
+
           # Belt and braces, and deliberately kept: the resolve step has already
           # established `current_tag != target_tag`, so the `jq` rewrite above
           # always dirties `facets.json` and this cannot fire today. It is here
@@ -568,6 +601,8 @@ jobs:
             rm -f facets.lock   # CLI 0.33.1 resolves the LOCKED commit, ignoring an edited git ref
             facet install       # agent-facets@${{ env.FACET_CLI_VERSION }}
             ```
+
+            **Tree check after the install:** ${{ steps.materialize.outputs.skills_check || 'not run' }}
 
             Nothing was hand-copied. The claude-code adapter normalizes `SKILL.md` frontmatter, so
             a hand copy differs byte-for-byte from an install — which is also why `facet install`

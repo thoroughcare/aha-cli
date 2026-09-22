@@ -439,10 +439,21 @@ jobs:
             if [ -s "$1" ]; then paste -sd ',' "$1" | sed 's/,/, /g'; else printf '%s' '—'; fi
           }
 
+          # Captured rather than substituted inline, for the same read-then-
+          # interpret reason as the `gh` and `git` lookups elsewhere. There is
+          # no realistic way `paste`/`sed` fail against a temp file written two
+          # lines up, and the worst case is a malformed table cell rather than
+          # a wrong action — but this was the file's last instance of the shape
+          # its own header argues against, and one exception is what a later
+          # reader has to stop and re-derive.
+          added="$(as_list "${work}/added")" || exit
+          removed="$(as_list "${work}/removed")" || exit
+          updated="$(as_list "${work}/updated")" || exit
+
           {
-            printf 'added=%s\n' "$(as_list "${work}/added")"
-            printf 'removed=%s\n' "$(as_list "${work}/removed")"
-            printf 'updated=%s\n' "$(as_list "${work}/updated")"
+            printf 'added=%s\n' "${added}"
+            printf 'removed=%s\n' "${removed}"
+            printf 'updated=%s\n' "${updated}"
           } >> "${GITHUB_OUTPUT}"
 
       - name: Commit and push the branch
@@ -603,11 +614,14 @@ jobs:
           # (`${BRANCH_PREIFX}`), which now expands silently to empty, and this
           # is where that would land.
           #
-          # The blast radius here is smaller than in the orphan sweep: with an
-          # empty prefix every open PR becomes a candidate, but the release-tag
-          # regex below still has to match the whole head ref, so nothing
-          # reaches the close. The guard is cheap and the symmetry is worth
-          # more than the argument about which of the two is actually exposed.
+          # The blast radius here is smaller than in the orphan sweep, though
+          # not zero: with an empty prefix every open PR becomes a candidate,
+          # and the release-tag regex below then has to match the *whole* head
+          # ref — so a branch named under this org's `${type}/${TICKET}-…`
+          # convention cannot reach the close, but one named exactly
+          # `facet-v1.2.3` still could. The same regex gates both steps, so
+          # what actually differs between them is how large a candidate set an
+          # empty prefix would enumerate first, not how airtight the filter is.
           if [ -z "${BRANCH_PREFIX}" ] || [ -z "${TARGET_TAG}" ]; then
             echo "::error::Refusing to run with an empty BRANCH_PREFIX or TARGET_TAG."
             exit 1
@@ -705,6 +719,19 @@ jobs:
             # branch behind an **open** PR closes that PR, so the failure mode
             # is someone's reviewed work disappearing because an API call
             # flaked. A lookup that did not succeed is not evidence of absence.
+            #
+            # Aborting rather than skipping this one candidate is deliberate,
+            # and the trade is real: this is the last step, so it fails the job
+            # red after the PR — the part that matters — has already been
+            # opened, and it stops the loop, leaving any later orphan unswept
+            # until the next bump. It is still the right default, because a
+            # `gh` failure here is a token, rate-limit or network problem
+            # rather than anything about this branch, so the next iteration
+            # would hit it too; continuing would turn one honest red run into a
+            # quiet series of skipped checks, which is the failure this whole
+            # workflow exists to stop. If it ever proves noisy, skip-this-
+            # candidate-and-exit-non-zero-at-the-end is the cheaper variant and
+            # does not reopen the hole.
             if ! pr_number="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${head}" \
                   --state all --limit 1 --json number --jq '.[0].number // empty')"; then
               echo "::error::Could not check whether ${head} has a PR. Refusing to delete a branch on an unconfirmed lookup."

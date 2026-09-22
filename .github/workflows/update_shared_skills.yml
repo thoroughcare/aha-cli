@@ -56,8 +56,19 @@ name: Update shared skills
 #     loudly — which is the point. Writing an MCP server into a repo is a
 #     decision a person makes.
 #
-# Background: `docs/tech-guides/facet-skills.md` in tcare, and the facet's own
-# `docs/ROLLOUT.md`.
+# **No `set -e` / `set -u` / `set -o pipefail`, and no `|| exit 1`.** That is
+# `thoroughcare:docs/ci-cd/ci.md` §11, and since this file ships byte-identical
+# into that repo too, its rule is the one all seven copies follow. A command
+# that must succeed is suffixed `|| exit` — bare, so it re-uses `$?` and aborts
+# with the real exit code rather than a flattened `1`; the last command in a
+# block needs none, its status already being the block's. Actions runs `run:`
+# under `bash -e -o pipefail` regardless, so this is about not *relying* on
+# flags that are silently disabled inside command substitutions, on the left of
+# `&&`/`||`, and in `if`/`while` conditions — one of which cost an unreachable
+# error message in this very file during review.
+#
+# Background: `docs/tech-guides/facet-skills.md` in tcare, the facet's own
+# `docs/ROLLOUT.md`, and `thoroughcare:docs/ci-cd/ci.md` §11 for the shell rule.
 
 on:
   schedule:
@@ -120,7 +131,6 @@ jobs:
         env:
           ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
         run: |
-          set -euo pipefail
           if [ -z "${ROBOT_GITHUB_TOKEN}" ]; then
             echo "::error::ROBOT_GITHUB_TOKEN is not available to ${GITHUB_REPOSITORY}. It is an org secret shared with a selected set of repositories, so an org admin has to add this one. It is needed both to read the private ${FACET_REPO} and to open the PR."
             exit 1
@@ -145,7 +155,6 @@ jobs:
           ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
           REQUESTED_TAG: ${{ inputs.tag }}
         run: |
-          set -euo pipefail
 
           if [ ! -f facets.json ]; then
             echo "::error::No facets.json in ${GITHUB_REPOSITORY}; this repo does not consume the facet."
@@ -157,7 +166,7 @@ jobs:
           # a *writer* that does destroys the repo's omission set — so both the
           # read here and the write below handle the two shapes.
           current_source="$(jq -er --arg f "${FACET_NAME}" \
-            '.facets[$f] | if type == "string" then . else .source end' facets.json)"
+            '.facets[$f] | if type == "string" then . else .source end' facets.json)" || exit
           current_tag="${current_source##*#}"
           if [ "${current_tag}" = "${current_source}" ]; then
             echo "::error::The ${FACET_NAME} source in facets.json carries no '#<ref>': ${current_source}"
@@ -262,13 +271,12 @@ jobs:
           GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
         run: |
-          set -euo pipefail
           branch="${BRANCH_PREFIX}${TARGET_TAG}"
           echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
 
           existing="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" \
             --state all --limit 1 --json number,state,url \
-            --jq '.[0] | select(.) | "#\(.number) \(.state) \(.url)"')"
+            --jq '.[0] | select(.) | "#\(.number) \(.state) \(.url)"')" || exit
 
           if [ -n "${existing}" ]; then
             echo "proceed=false" >> "${GITHUB_OUTPUT}"
@@ -309,7 +317,6 @@ jobs:
           CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
         run: |
-          set -euo pipefail
 
           # The CLI shells out to git itself, so the credential cannot be passed
           # per invocation — it has to be somewhere git will read. The runner is
@@ -323,23 +330,23 @@ jobs:
           # one.
           git config --global \
             "url.https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/.insteadOf" \
-            "https://github.com/"
+            "https://github.com/" || exit
 
           # The CLI clones into TMPDIR and renames into ~/.facet/cache; when the
           # two sit on different filesystems the rename fails with
           # `EXDEV: cross-device link not permitted` and the install aborts.
-          mkdir -p "${HOME}/.facet/tmp"
+          mkdir -p "${HOME}/.facet/tmp" || exit
           export TMPDIR="${HOME}/.facet/tmp"
 
           # Adapters install globally, not per project. A runner has none, and a
           # non-interactive shell cannot be prompted for one.
-          facet adapter add claude-code
+          facet adapter add claude-code || exit
 
           # Rewrite only the ref, and only inside this facet's entry. `jq`
           # rather than `sed` so the object form's `materialization` block is
           # carried across verbatim — losing it would silently install the
           # skills this repo has declined.
-          tmp="$(mktemp)"
+          tmp="$(mktemp)" || exit
           jq --arg f "${FACET_NAME}" --arg tag "${TARGET_TAG}" '
             .facets[$f] |= (
               if type == "string"
@@ -347,8 +354,8 @@ jobs:
               else .source |= sub("#.*$"; "#" + $tag)
               end
             )
-          ' facets.json > "${tmp}"
-          mv "${tmp}" facets.json
+          ' facets.json > "${tmp}" || exit
+          mv "${tmp}" facets.json || exit
 
           # See the header: with a lockfile present, CLI 0.33.1 resolves the
           # LOCKED commit and ignores the ref just written. Deleting it is what
@@ -356,14 +363,14 @@ jobs:
           # and everything it records is derived from the manifest.
           rm -f facets.lock
 
-          facet install --verbose
+          facet install --verbose || exit
 
           if [ ! -f facets.lock ]; then
             echo "::error::facet install wrote no facets.lock, so the install did not resolve."
             exit 1
           fi
 
-          resolved="$(jq -r --arg f "${FACET_NAME}" '.facets[$f].source.commit' facets.lock)"
+          resolved="$(jq -r --arg f "${FACET_NAME}" '.facets[$f].source.commit' facets.lock)" || exit
           echo "resolved ${TARGET_TAG} to ${resolved}"
           echo "commit=${resolved}" >> "${GITHUB_OUTPUT}"
 
@@ -386,9 +393,8 @@ jobs:
         id: summary
         if: steps.materialize.outputs.changed == 'true'
         run: |
-          set -euo pipefail
           work="${RUNNER_TEMP}/skills"
-          mkdir -p "${work}"
+          mkdir -p "${work}" || exit
 
           # The directory names under `.claude/skills/` are the skill names, at
           # HEAD and now. A file changing inside a skill is an update; the
@@ -439,17 +445,16 @@ jobs:
             whether ${{ env.FACET_REPO }} has a newer release than this repo is
             pinned to. It proposes the bump; merging it is a human's call.
         run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "${BRANCH}"
+          git config user.name "github-actions[bot]" || exit
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com" || exit
+          git switch -c "${BRANCH}" || exit
 
           # The three paths are one change: a `facets.json` bumped without the
           # lockfile and the materialized tree is a lie about what the repo
           # runs. Nothing outside them is staged — in particular no workflow
           # file, so the push needs no `workflow` scope on the token.
-          git add facets.json facets.lock .claude/skills
-          git commit --file - <<<"${COMMIT_MESSAGE}"
+          git add facets.json facets.lock .claude/skills || exit
+          git commit --file - <<<"${COMMIT_MESSAGE}" || exit
 
           git push origin "${BRANCH}"
 
@@ -515,7 +520,6 @@ jobs:
             workflow (WDOGS-530), which checks hourly whether ${{ env.FACET_REPO }} has a newer
             release than this repo is pinned to. It proposes; it never merges.
         run: |
-          set -euo pipefail
 
           # Opened ready for review rather than as a draft: the change is
           # complete the moment the workflow makes it, and a draft is not
@@ -543,9 +547,11 @@ jobs:
             printf '%s\n' "${out}"
           fi
 
+          url="$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq .url)" || exit
+          number="$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json number --jq .number)" || exit
           {
-            echo "url=$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq .url)"
-            echo "number=$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json number --jq .number)"
+            echo "url=${url}"
+            echo "number=${number}"
           } >> "${GITHUB_OUTPUT}"
 
       # At most one bump PR open at a time. Two releases in a week would
@@ -571,7 +577,16 @@ jobs:
           NEW_URL: ${{ steps.pr.outputs.url }}
           NEW_PR: ${{ steps.pr.outputs.number }}
         run: |
-          set -euo pipefail
+          # `set -u` is deliberately not in use (see the header), so the two
+          # values this step would do real damage with if they were ever empty
+          # are checked by hand. An empty prefix makes the match below match
+          # **every** open PR, and this step closes what it matches — that is
+          # precisely the class of mistake `-u` was catching for free, so it
+          # gets an explicit guard rather than a silent expansion.
+          if [ -z "${BRANCH_PREFIX}" ] || [ -z "${TARGET_TAG}" ]; then
+            echo "::error::Refusing to run with an empty BRANCH_PREFIX or TARGET_TAG."
+            exit 1
+          fi
 
           # Real `jq` with `--arg`, not `gh --jq`: `gh` has no way to bind a
           # variable, so the branch name would have to be spliced into the
@@ -582,7 +597,7 @@ jobs:
             | jq -r --arg prefix "${BRANCH_PREFIX}" --arg branch "${BRANCH}" \
                 '.[] | select(.headRefName | startswith($prefix))
                      | select(.headRefName != $branch)
-                     | "\(.number)\t\(.headRefName)"')"
+                     | "\(.number)\t\(.headRefName)"')" || exit
 
           while IFS=$'\t' read -r number head; do
             [ -n "${number}" ] || continue
@@ -601,8 +616,8 @@ jobs:
 
             echo "Superseding #${number} (${tag}) with #${NEW_PR} (${TARGET_TAG})"
             gh pr comment "${number}" --repo "${GITHUB_REPOSITORY}" \
-              --body "Superseded by ${NEW_URL}, which bumps the facet further — to \`${TARGET_TAG}\`, past this PR's \`${tag}\`. Closing this one so only one shared-skills bump is open at a time."
-            gh pr close "${number}" --repo "${GITHUB_REPOSITORY}" --delete-branch
+              --body "Superseded by ${NEW_URL}, which bumps the facet further — to \`${TARGET_TAG}\`, past this PR's \`${tag}\`. Closing this one so only one shared-skills bump is open at a time." || exit
+            gh pr close "${number}" --repo "${GITHUB_REPOSITORY}" --delete-branch || exit
           done <<<"${candidates}"
 
       # Branch litter. A run killed between the push and `gh pr create` leaves a
@@ -620,9 +635,21 @@ jobs:
           BRANCH: ${{ steps.guard.outputs.branch }}
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
         run: |
-          set -euo pipefail
-          heads="$(git ls-remote --heads origin "refs/heads/${BRANCH_PREFIX}*" \
-            | awk '{ print $2 }' | sed 's#^refs/heads/##' || true)"
+          # `set -u` is deliberately not in use (see the header), so the two
+          # values this step would do real damage with if they were ever empty
+          # are checked by hand. An empty prefix makes the match below match
+          # **every** branch in the repo, and this step deletes what it matches — that is
+          # precisely the class of mistake `-u` was catching for free, so it
+          # gets an explicit guard rather than a silent expansion.
+          if [ -z "${BRANCH_PREFIX}" ] || [ -z "${TARGET_TAG}" ]; then
+            echo "::error::Refusing to run with an empty BRANCH_PREFIX or TARGET_TAG."
+            exit 1
+          fi
+
+          # Same split as the tag lookup: a failed `ls-remote` is not "no
+          # orphans", so it aborts rather than quietly sweeping nothing.
+          refs="$(git ls-remote --heads origin "refs/heads/${BRANCH_PREFIX}*")" || exit
+          heads="$(printf '%s\n' "${refs}" | awk '{ print $2 }' | sed 's#^refs/heads/##')"
 
           for head in ${heads}; do
             [ "${head}" = "${BRANCH}" ] && continue
@@ -642,5 +669,5 @@ jobs:
             fi
 
             echo "Deleting orphaned branch ${head} (no PR ever opened for it)"
-            git push origin --delete "${head}"
+            git push origin --delete "${head}" || exit
           done

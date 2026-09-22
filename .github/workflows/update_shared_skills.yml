@@ -63,6 +63,13 @@ on:
   schedule:
     # Hourly, deliberately off the hour: GitHub queues every `0 * * * *` cron in
     # the world at the same moment and delays them under load.
+    #
+    # GitHub **disables a scheduled workflow after 60 days without repository
+    # activity**, and says so only by email to the last committer. On a quiet
+    # repo that is the likeliest way this stops running, and it looks exactly
+    # like "the facet just hasn't released anything" — so if a repo drifts
+    # behind, check the Actions tab for the disable banner before debugging the
+    # workflow.
     - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
@@ -101,6 +108,10 @@ jobs:
     name: Propose a facet bump
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # A fork inherits the schedule but none of the secrets, so without this it
+    # would fail hourly in someone else's account for a reason that is not their
+    # problem.
+    if: github.repository_owner == 'thoroughcare'
     steps:
       # ROBOT_GITHUB_TOKEN is an org secret, and an org secret is shared with a
       # chosen set of repos. Fail here with something actionable rather than
@@ -154,7 +165,16 @@ jobs:
           fi
 
           if [ -n "${REQUESTED_TAG}" ]; then
+            # It becomes a git ref and a branch name, so constrain its shape
+            # rather than trusting the dispatch form. Deliberately wider than
+            # the release-tag pattern below, so a prerelease can be dispatched
+            # on purpose.
+            if ! printf '%s' "${REQUESTED_TAG}" | grep -qE '^facet-v[0-9A-Za-z][0-9A-Za-z.+_-]*$'; then
+              echo "::error::'${REQUESTED_TAG}' is not a facet tag (expected facet-v<something>)."
+              exit 1
+            fi
             target_tag="${REQUESTED_TAG}"
+            by_hand=true
             echo "Target tag given by hand: ${target_tag}"
           else
             # `--refs` drops the peeled `^{}` duplicates. The grep keeps release
@@ -167,8 +187,9 @@ jobs:
                 | sed 's#^refs/tags/##' \
                 | grep -E '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' \
                 | sort -V \
-                | tail -n 1
+                | tail -n 1 || true
             )"
+            by_hand=false
           fi
 
           if [ -z "${target_tag}" ]; then
@@ -190,11 +211,13 @@ jobs:
             exit 0
           fi
 
-          # Only ever move forward. A pin ahead of the newest tag means someone
-          # pinned a tag that was later deleted, or an unreleased ref on purpose
-          # — either way, silently rolling it back is the wrong move.
+          # Only ever move forward *on the schedule*. A pin ahead of the newest
+          # tag means someone pinned a tag that was later deleted, or an
+          # unreleased ref on purpose — either way, silently rolling it back at
+          # 23 past the hour is the wrong move. A hand dispatch is exempt,
+          # because rolling a bad release back is exactly what it is for.
           newer="$(printf '%s\n%s\n' "${current_tag}" "${target_tag}" | sort -V | tail -n 1)"
-          if [ "${newer}" != "${target_tag}" ]; then
+          if [ "${by_hand}" = "false" ] && [ "${newer}" != "${target_tag}" ]; then
             echo "bump=false" >> "${GITHUB_OUTPUT}"
             echo "::warning::Pinned at ${current_tag}, which is ahead of the newest tag ${target_tag}. Leaving it alone."
             exit 0
@@ -240,6 +263,15 @@ jobs:
 
           echo "proceed=true" >> "${GITHUB_OUTPUT}"
 
+      # Pinning the CLI does nothing if the runtime under it drifts: a runner
+      # image bump would silently change the Node the CLI executes on, which is
+      # the same non-reproducibility the version pin exists to prevent.
+      - name: Set up Node
+        if: steps.guard.outputs.proceed == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
       - name: Install the facet CLI
         if: steps.guard.outputs.proceed == 'true'
         run: npm install -g "agent-facets@${FACET_CLI_VERSION}"
@@ -257,6 +289,13 @@ jobs:
           # The CLI shells out to git itself, so the credential cannot be passed
           # per invocation — it has to be somewhere git will read. The runner is
           # ephemeral and single-tenant, and Actions masks the secret in logs.
+          #
+          # Note the scope: this is `--global`, so from here on **every**
+          # github.com git operation in the job uses the robot's token, not just
+          # the CLI's clone. Harmless today — the checkout already persisted the
+          # same token for this repo — but a step added later that touches
+          # another repo will silently pick it up, so know that before adding
+          # one.
           git config --global \
             "url.https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/.insteadOf" \
             "https://github.com/"
@@ -303,6 +342,12 @@ jobs:
           echo "resolved ${TARGET_TAG} to ${resolved}"
           echo "commit=${resolved}" >> "${GITHUB_OUTPUT}"
 
+          # Belt and braces, and deliberately kept: the resolve step has already
+          # established `current_tag != target_tag`, so the `jq` rewrite above
+          # always dirties `facets.json` and this cannot fire today. It is here
+          # so that a later change to how the target is chosen turns "nothing
+          # happened" into a warning rather than an empty commit and a PR with
+          # no diff.
           if [ -z "$(git status --porcelain)" ]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
             echo "::warning::${CURRENT_TAG} -> ${TARGET_TAG} produced no diff; nothing to propose."
@@ -478,22 +523,95 @@ jobs:
       # otherwise leave two PRs proposing the same thing at different versions,
       # and merging the older one would be undone by the newer immediately.
       # Dependabot's model: supersede, say so, close.
+      #
+      # **Close only what is provably older.** "Any other bump PR is an older
+      # one" holds for the schedule, where `ls-remote` always resolves the
+      # newest tag — and is false the moment `workflow_dispatch` is used, which
+      # is the whole point of that input. Without the comparison below, a run
+      # dispatched at `facet-v0.3.0` closes an open `facet-v0.5.0` PR and
+      # deletes its branch, over a comment claiming it "bumps the facet
+      # further". Refusing to close anything whose suffix is not a release tag
+      # covers the other case: a human working under this prefix owns that
+      # branch, not this workflow.
       - name: Close any bump PR this one supersedes
         if: steps.pr.outputs.number != ''
         env:
           GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
           BRANCH: ${{ steps.guard.outputs.branch }}
+          TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
           NEW_URL: ${{ steps.pr.outputs.url }}
           NEW_PR: ${{ steps.pr.outputs.number }}
         run: |
           set -euo pipefail
-          superseded="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open \
-            --limit 100 --json number,headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number] | .[]")"
 
-          for number in ${superseded}; do
-            echo "Superseding #${number} with #${NEW_PR}"
+          # Real `jq` with `--arg`, not `gh --jq`: `gh` has no way to bind a
+          # variable, so the branch name would have to be spliced into the
+          # filter — and it derives from a dispatch input, where one `\"` makes
+          # the program malformed.
+          candidates="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open \
+            --limit 100 --json number,headRefName \
+            | jq -r --arg prefix "${BRANCH_PREFIX}" --arg branch "${BRANCH}" \
+                '.[] | select(.headRefName | startswith($prefix))
+                     | select(.headRefName != $branch)
+                     | "\(.number)\t\(.headRefName)"')"
+
+          while IFS=$'\t' read -r number head; do
+            [ -n "${number}" ] || continue
+            tag="${head#"${BRANCH_PREFIX}"}"
+
+            if ! printf '%s' "${tag}" | grep -qE '^facet-v[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::notice::Leaving #${number} (${head}) alone: its suffix is not a release tag, so this workflow did not open it."
+              continue
+            fi
+
+            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)"
+            if [ "${tag}" = "${TARGET_TAG}" ] || [ "${oldest}" != "${tag}" ]; then
+              echo "::notice::Leaving #${number} (${tag}) alone: it is not older than ${TARGET_TAG}."
+              continue
+            fi
+
+            echo "Superseding #${number} (${tag}) with #${NEW_PR} (${TARGET_TAG})"
             gh pr comment "${number}" --repo "${GITHUB_REPOSITORY}" \
-              --body "Superseded by ${NEW_URL}, which bumps the facet further. Closing this one so only one shared-skills bump is open at a time."
+              --body "Superseded by ${NEW_URL}, which bumps the facet further — to \`${TARGET_TAG}\`, past this PR's \`${tag}\`. Closing this one so only one shared-skills bump is open at a time."
             gh pr close "${number}" --repo "${GITHUB_REPOSITORY}" --delete-branch
+          done <<<"${candidates}"
+
+      # Branch litter. A run killed between the push and `gh pr create` leaves a
+      # branch with no PR, and the "adopt" path in the guard heals that only
+      # while the next run still targets the same tag — once a newer tag lands,
+      # nothing ever looks at the old branch again. A branch under this prefix
+      # that has never had a PR holds nothing a person wrote and is reproducible
+      # in full from the tag in its own name, so deleting it loses nothing. The
+      # same two refusals as above apply: not a release tag, or not older than
+      # what was just opened, means leave it alone.
+      - name: Delete orphaned bump branches
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          BRANCH: ${{ steps.guard.outputs.branch }}
+          TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+          heads="$(git ls-remote --heads origin "refs/heads/${BRANCH_PREFIX}*" \
+            | awk '{ print $2 }' | sed 's#^refs/heads/##' || true)"
+
+          for head in ${heads}; do
+            [ "${head}" = "${BRANCH}" ] && continue
+            tag="${head#"${BRANCH_PREFIX}"}"
+
+            printf '%s' "${tag}" | grep -qE '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' || continue
+
+            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)"
+            [ "${oldest}" = "${tag}" ] && [ "${tag}" != "${TARGET_TAG}" ] || continue
+
+            # Any PR at all, in any state, means the branch is someone's record
+            # of a decision — the closed-unmerged case is the declined bump the
+            # guard deliberately preserves.
+            if [ -n "$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${head}" \
+                        --state all --limit 1 --json number --jq '.[0].number // empty')" ]; then
+              continue
+            fi
+
+            echo "Deleting orphaned branch ${head} (no PR ever opened for it)"
+            git push origin --delete "${head}"
           done

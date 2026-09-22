@@ -1,0 +1,499 @@
+name: Update shared skills
+
+# Propose the shared-skill facet bump nobody gets round to doing by hand.
+#
+# The Claude skills under `.claude/skills/` come from the `thoroughcare-tooling`
+# facet in the private `thoroughcare/claude-plugins` repo. They are pinned by tag
+# in `facets.json` and **committed**, so a release there reaches this repo only
+# when someone bumps the pin, re-runs `facet install`, and commits the
+# re-materialized tree — one PR per repo per release. That did not happen:
+# `facet-v0.5.0` was tagged on 2026-09-11 and four of the seven consuming repos
+# were still on `facet-v0.1.0` when this workflow was written (WDOGS-530).
+#
+# Hourly, this resolves the newest `facet-v*` tag and — when it is ahead of the
+# pin here — opens a PR carrying the bump.
+#
+# **It proposes; it never merges.** The guarantee that a release cannot change a
+# repo underneath its developers is untouched, because that guarantee lives in
+# the review-and-merge step, not in the fact that a human typed `facet install`.
+# What this removes is the gap between "a release exists" and "a reviewable PR
+# exists".
+#
+# ---------------------------------------------------------------------------
+# THIS FILE IS BYTE-IDENTICAL IN EVERY REPO THAT CONSUMES THE FACET
+#
+#   thoroughcare/{tcare, thoroughcare, claude-plugins, rpm-consumer,
+#                 scrummaster, aha-mcp, aha-cli}
+#
+# Nothing in it is repo-specific: the base branch, the repo name and the facet
+# pin are all read from the event or the working tree at run time. Keeping the
+# bytes identical is what makes `diff` across two checkouts a real check that
+# the fleet is in sync, so **a change here is a change in all seven**, shipped
+# on one ticket. If a repo ever genuinely needs to differ, express the
+# difference as something the file reads rather than as a local edit.
+# ---------------------------------------------------------------------------
+#
+# Four things worth knowing before editing:
+#
+#   * **`facet install` ignores an edited git ref while a lockfile is present.**
+#     On CLI 0.33.1 it treats `facets.lock` as the source of truth for a
+#     git-sourced facet: bump the tag in `facets.json`, run `facet install`, and
+#     it prints `cache hit thoroughcare-tooling@<old>` and `(no changes)`, exits
+#     0, and leaves the manifest and the lockfile disagreeing. `--frozen-lockfile`,
+#     whose whole job is to fail on that drift, does not catch it either. So the
+#     bump step below **deletes `facets.lock`** to force a re-resolve from the
+#     manifest. The omission set lives in `facets.json` and survives.
+#   * **`facet add` would destroy the omissions.** It rewrites `facets.json` into
+#     the bare-string form and drops `materialization.skills` with it. The bump
+#     is an edit to the ref plus `install` — which is also why the edit is made
+#     with `jq` on one field rather than with `sed` on the file.
+#   * **Never hand-copy `skills/` from the facet.** The claude-code adapter
+#     normalizes `SKILL.md` frontmatter, so a hand copy differs byte-for-byte
+#     from an install — and since `install` writes only what changed, that turns
+#     every later bump's diff into noise.
+#   * **No `--accept-mcp`.** The facet ships skills today. If it ever declares an
+#     MCP server, the install has no TTY to approve it with and this job fails
+#     loudly — which is the point. Writing an MCP server into a repo is a
+#     decision a person makes.
+#
+# Background: `docs/tech-guides/facet-skills.md` in tcare, and the facet's own
+# `docs/ROLLOUT.md`.
+
+on:
+  schedule:
+    # Hourly, deliberately off the hour: GitHub queues every `0 * * * *` cron in
+    # the world at the same moment and delays them under load.
+    - cron: "23 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Facet tag to move to (default: the newest facet-v* tag)"
+        required: false
+        type: string
+
+# Nothing here uses GITHUB_TOKEN to write. The branch, the PR and the comments
+# are all made with ROBOT_GITHUB_TOKEN, which this needs to be rather than
+# GITHUB_TOKEN anyway: a PR opened by GITHUB_TOKEN fires no `pull_request`
+# events, so it would sit there with no CI and no review.
+permissions:
+  contents: read
+
+concurrency:
+  # One at a time per repo. Deliberately not `cancel-in-progress`: a run killed
+  # between the push and `gh pr create` leaves a branch with no PR, and while
+  # the guard below heals exactly that, not creating the state is better.
+  group: update-shared-skills
+  cancel-in-progress: false
+
+env:
+  FACET_REPO: thoroughcare/claude-plugins
+  FACET_NAME: thoroughcare-tooling
+  # Pinned deliberately: an unpinned CLI would make the bytes written into
+  # `.claude/skills/` depend on whatever shipped that morning. tcare's
+  # `bin/facet` pins the same version for the local flow; move the two together.
+  FACET_CLI_VERSION: "0.33.1"
+  # One branch per target tag, so a branch is written once and never rewritten
+  # — this workflow force-pushes nothing.
+  BRANCH_PREFIX: devops/shared-skills-
+
+jobs:
+  bump:
+    name: Propose a facet bump
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      # ROBOT_GITHUB_TOKEN is an org secret, and an org secret is shared with a
+      # chosen set of repos. Fail here with something actionable rather than
+      # four steps later with an opaque git authentication error.
+      - name: Check the robot token is available here
+        env:
+          ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ROBOT_GITHUB_TOKEN}" ]; then
+            echo "::error::ROBOT_GITHUB_TOKEN is not available to ${GITHUB_REPOSITORY}. It is an org secret shared with a selected set of repositories, so an org admin has to add this one. It is needed both to read the private ${FACET_REPO} and to open the PR."
+            exit 1
+          fi
+
+      - name: Check out the default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Shallow is enough. The bump is one commit on top of a commit the
+          # remote already has, so the push sends only the new objects.
+          fetch-depth: 1
+          # Leaves the remote credentialed, so the push needs no URL rewriting,
+          # and makes the commit and the PR come from the robot rather than from
+          # GITHUB_TOKEN.
+          token: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+
+      # The entire cost of a no-op run, which is what almost every run is: one
+      # `ls-remote` and one `jq`. Nothing is installed unless a bump is real.
+      - name: Resolve the newest facet tag and compare it with the pin
+        id: resolve
+        env:
+          ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f facets.json ]; then
+            echo "::error::No facets.json in ${GITHUB_REPOSITORY}; this repo does not consume the facet."
+            exit 1
+          fi
+
+          # A `facets.json` entry is EITHER a source string OR an object with a
+          # `source` key. A reader that assumes one form misreads the other, and
+          # a *writer* that does destroys the repo's omission set — so both the
+          # read here and the write below handle the two shapes.
+          current_source="$(jq -er --arg f "${FACET_NAME}" \
+            '.facets[$f] | if type == "string" then . else .source end' facets.json)"
+          current_tag="${current_source##*#}"
+          if [ "${current_tag}" = "${current_source}" ]; then
+            echo "::error::The ${FACET_NAME} source in facets.json carries no '#<ref>': ${current_source}"
+            exit 1
+          fi
+
+          if [ -n "${REQUESTED_TAG}" ]; then
+            target_tag="${REQUESTED_TAG}"
+            echo "Target tag given by hand: ${target_tag}"
+          else
+            # `--refs` drops the peeled `^{}` duplicates. The grep keeps release
+            # tags only, so a `facet-v0.6.0-rc.1` is never proposed to a repo.
+            target_tag="$(
+              git ls-remote --tags --refs \
+                "https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/${FACET_REPO}.git" \
+                'refs/tags/facet-v*' \
+                | awk '{ print $2 }' \
+                | sed 's#^refs/tags/##' \
+                | grep -E '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' \
+                | sort -V \
+                | tail -n 1
+            )"
+          fi
+
+          if [ -z "${target_tag}" ]; then
+            echo "::error::No facet-v<x.y.z> tag found in ${FACET_REPO}."
+            exit 1
+          fi
+
+          echo "pinned: ${current_tag}"
+          echo "newest: ${target_tag}"
+
+          {
+            echo "current_tag=${current_tag}"
+            echo "target_tag=${target_tag}"
+          } >> "${GITHUB_OUTPUT}"
+
+          if [ "${current_tag}" = "${target_tag}" ]; then
+            echo "bump=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Already on ${current_tag}; nothing to propose."
+            exit 0
+          fi
+
+          # Only ever move forward. A pin ahead of the newest tag means someone
+          # pinned a tag that was later deleted, or an unreleased ref on purpose
+          # — either way, silently rolling it back is the wrong move.
+          newer="$(printf '%s\n%s\n' "${current_tag}" "${target_tag}" | sort -V | tail -n 1)"
+          if [ "${newer}" != "${target_tag}" ]; then
+            echo "bump=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Pinned at ${current_tag}, which is ahead of the newest tag ${target_tag}. Leaving it alone."
+            exit 0
+          fi
+
+          echo "bump=true" >> "${GITHUB_OUTPUT}"
+
+      # The duplicate-PR guard, and the only state this workflow keeps. A PR for
+      # this exact branch in ANY state is a stop: open means it is already
+      # proposed, merged means it landed, and closed-unmerged means a human
+      # declined this release — of the three, re-proposing that one every hour
+      # would be the worst.
+      - name: Check whether this bump has already been proposed
+        id: guard
+        if: steps.resolve.outputs.bump == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+          branch="${BRANCH_PREFIX}${TARGET_TAG}"
+          echo "branch=${branch}" >> "${GITHUB_OUTPUT}"
+
+          existing="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" \
+            --state all --limit 1 --json number,state,url \
+            --jq '.[0] | select(.) | "#\(.number) \(.state) \(.url)"')"
+
+          if [ -n "${existing}" ]; then
+            echo "proceed=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::${GITHUB_REPOSITORY} already has a PR for ${branch}: ${existing}"
+            exit 0
+          fi
+
+          # A branch with no PR is the one recoverable failure: a previous run
+          # pushed and then died before `gh pr create`. Open the PR for what is
+          # already there rather than rebuilding it — rebuilding would mean a
+          # force-push, and this workflow force-pushes nothing.
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "proceed=adopt" >> "${GITHUB_OUTPUT}"
+            echo "::notice::${branch} exists on the remote with no PR; opening one for it."
+            exit 0
+          fi
+
+          echo "proceed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Install the facet CLI
+        if: steps.guard.outputs.proceed == 'true'
+        run: npm install -g "agent-facets@${FACET_CLI_VERSION}"
+
+      - name: Materialize the bump
+        id: materialize
+        if: steps.guard.outputs.proceed == 'true'
+        env:
+          ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
+          TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+
+          # The CLI shells out to git itself, so the credential cannot be passed
+          # per invocation — it has to be somewhere git will read. The runner is
+          # ephemeral and single-tenant, and Actions masks the secret in logs.
+          git config --global \
+            "url.https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/.insteadOf" \
+            "https://github.com/"
+
+          # The CLI clones into TMPDIR and renames into ~/.facet/cache; when the
+          # two sit on different filesystems the rename fails with
+          # `EXDEV: cross-device link not permitted` and the install aborts.
+          mkdir -p "${HOME}/.facet/tmp"
+          export TMPDIR="${HOME}/.facet/tmp"
+
+          # Adapters install globally, not per project. A runner has none, and a
+          # non-interactive shell cannot be prompted for one.
+          facet adapter add claude-code
+
+          # Rewrite only the ref, and only inside this facet's entry. `jq`
+          # rather than `sed` so the object form's `materialization` block is
+          # carried across verbatim — losing it would silently install the
+          # skills this repo has declined.
+          tmp="$(mktemp)"
+          jq --arg f "${FACET_NAME}" --arg tag "${TARGET_TAG}" '
+            .facets[$f] |= (
+              if type == "string"
+              then sub("#.*$"; "#" + $tag)
+              else .source |= sub("#.*$"; "#" + $tag)
+              end
+            )
+          ' facets.json > "${tmp}"
+          mv "${tmp}" facets.json
+
+          # See the header: with a lockfile present, CLI 0.33.1 resolves the
+          # LOCKED commit and ignores the ref just written. Deleting it is what
+          # makes the install re-read `facets.json`. It is regenerated below,
+          # and everything it records is derived from the manifest.
+          rm -f facets.lock
+
+          facet install --verbose
+
+          if [ ! -f facets.lock ]; then
+            echo "::error::facet install wrote no facets.lock, so the install did not resolve."
+            exit 1
+          fi
+
+          resolved="$(jq -r --arg f "${FACET_NAME}" '.facets[$f].source.commit' facets.lock)"
+          echo "resolved ${TARGET_TAG} to ${resolved}"
+          echo "commit=${resolved}" >> "${GITHUB_OUTPUT}"
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "changed=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::${CURRENT_TAG} -> ${TARGET_TAG} produced no diff; nothing to propose."
+            exit 0
+          fi
+          echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      # Which skills moved, so the PR says what changed rather than only that
+      # something did. Classified against HEAD, before anything is committed.
+      - name: Summarize which skills moved
+        id: summary
+        if: steps.materialize.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          work="${RUNNER_TEMP}/skills"
+          mkdir -p "${work}"
+
+          # The directory names under `.claude/skills/` are the skill names, at
+          # HEAD and now. A file changing inside a skill is an update; the
+          # directory appearing or disappearing is an add or a removal, and
+          # those are the two a reviewer must not miss.
+          git ls-tree -d --name-only HEAD -- .claude/skills/ \
+            | sed 's#^\.claude/skills/##' | sort -u > "${work}/before"
+          find .claude/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+            | sort -u > "${work}/after"
+          git status --porcelain -- .claude/skills \
+            | awk '{ print $NF }' | cut -d/ -f3 | sort -u > "${work}/touched"
+
+          comm -13 "${work}/before" "${work}/after" > "${work}/added"
+          comm -23 "${work}/before" "${work}/after" > "${work}/removed"
+          comm -12 "${work}/before" "${work}/after" > "${work}/kept"
+          comm -12 "${work}/touched" "${work}/kept" > "${work}/updated"
+
+          # `a, b, c` on one line, or an em dash when the list is empty, so the
+          # PR body reads as prose in all three cases. `paste -d` cycles through
+          # the delimiters it is given, so `-d ', '` would join with a comma and
+          # a space alternately; the separator has to be one character.
+          as_list() {
+            if [ -s "$1" ]; then paste -sd ',' "$1" | sed 's/,/, /g'; else printf '%s' '—'; fi
+          }
+
+          {
+            printf 'added=%s\n' "$(as_list "${work}/added")"
+            printf 'removed=%s\n' "$(as_list "${work}/removed")"
+            printf 'updated=%s\n' "$(as_list "${work}/updated")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Commit and push the branch
+        if: steps.materialize.outputs.changed == 'true'
+        env:
+          BRANCH: ${{ steps.guard.outputs.branch }}
+          # Built here rather than in the shell so the markdown keeps its own
+          # indentation: a heredoc's body would have to start at column 0, which
+          # ends the YAML block scalar this step is written in.
+          COMMIT_MESSAGE: |
+            Bump the shared skills to ${{ steps.resolve.outputs.target_tag }}
+
+            Move the `${{ env.FACET_NAME }}` facet from
+            `${{ steps.resolve.outputs.current_tag }}` to `${{ steps.resolve.outputs.target_tag }}`
+            (${{ steps.materialize.outputs.commit }}) and commit the skills
+            `facet install` re-materialized from it.
+
+            Opened by the `Update shared skills` workflow, which checks hourly
+            whether ${{ env.FACET_REPO }} has a newer release than this repo is
+            pinned to. It proposes the bump; merging it is a human's call.
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "${BRANCH}"
+
+          # The three paths are one change: a `facets.json` bumped without the
+          # lockfile and the materialized tree is a lie about what the repo
+          # runs. Nothing outside them is staged — in particular no workflow
+          # file, so the push needs no `workflow` scope on the token.
+          git add facets.json facets.lock .claude/skills
+          git commit --file - <<<"${COMMIT_MESSAGE}"
+
+          git push origin "${BRANCH}"
+
+      - name: Open the PR
+        id: pr
+        if: steps.materialize.outputs.changed == 'true' || steps.guard.outputs.proceed == 'adopt'
+        env:
+          GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          BRANCH: ${{ steps.guard.outputs.branch }}
+          BASE: ${{ github.event.repository.default_branch }}
+          TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
+          # Same reason as COMMIT_MESSAGE above. The step outputs are empty when
+          # this is adopting a branch a previous run pushed, so each falls back
+          # to an em dash rather than rendering a blank table cell.
+          PR_BODY: |
+            Moves the `${{ env.FACET_NAME }}` facet from `${{ steps.resolve.outputs.current_tag }}`
+            to `${{ steps.resolve.outputs.target_tag }}` and commits the skills `facet install`
+            re-materialized from it. `facets.json`, `facets.lock` and `.claude/skills/` are one
+            change — a manifest bumped without the other two is a lie about what this repo runs.
+
+            | | |
+            |---|---|
+            | **Skills added** | ${{ steps.summary.outputs.added || '—' }} |
+            | **Skills removed** | ${{ steps.summary.outputs.removed || '—' }} |
+            | **Skills updated** | ${{ steps.summary.outputs.updated || '—' }} |
+
+            **Read [the CHANGELOG for the range being crossed](https://github.com/${{ env.FACET_REPO }}/blob/${{ steps.resolve.outputs.target_tag }}/CHANGELOG.md)
+            before approving.** A bump changes how every future Claude session in this repo
+            behaves, so what there is to review is the behaviour the release describes, not the
+            line count.
+
+            A skill **appearing or disappearing** is the one thing worth stopping on. Which
+            skills this repo takes is a decision it makes for itself, through
+            `materialization.skills` in `facets.json` — not something a bump should carry in by
+            default. If a new one is not wanted here, decline it in `facets.json` on this branch.
+
+            ### How it was produced
+
+            ```shell
+            # the ref in facets.json, rewritten with jq so the omission set survives
+            rm -f facets.lock   # CLI 0.33.1 resolves the LOCKED commit, ignoring an edited git ref
+            facet install       # agent-facets@${{ env.FACET_CLI_VERSION }}
+            ```
+
+            Nothing was hand-copied. The claude-code adapter normalizes `SKILL.md` frontmatter, so
+            a hand copy differs byte-for-byte from an install — which is also why `facet install`
+            writing only what changed makes this diff exactly the skills the release touched.
+
+            ### QE
+
+            The diff is confined to `.claude/**` plus the two agent-tooling manifests, which
+            `AGENTS.md` § "QE dispositions are QE's call" names as a case for
+            **`not testable by QE`**. It is deliberately left unlabelled: the disposition is QE's
+            to apply, not this workflow's.
+
+            ---
+
+            Opened by the [`Update shared skills`](https://github.com/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/.github/workflows/update_shared_skills.yml)
+            workflow (WDOGS-530), which checks hourly whether ${{ env.FACET_REPO }} has a newer
+            release than this repo is pinned to. It proposes; it never merges.
+        run: |
+          set -euo pipefail
+
+          # Opened ready for review rather than as a draft: the change is
+          # complete the moment the workflow makes it, and a draft is not
+          # auto-reviewed. `gh` refuses to open a second PR for a branch that
+          # already has one, and the guard above means there is none — but a
+          # racing run would surface exactly here, so treat "already exists" as
+          # success rather than failing the run.
+          if ! out="$(gh pr create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --base "${BASE}" \
+            --head "${BRANCH}" \
+            --title "Bump the shared skills to ${TARGET_TAG}" \
+            --body "${PR_BODY}" 2>&1)"; then
+            # A herestring, not a pipe: `grep -q` closes the pipe on its first
+            # match, so a still-writing `printf` upstream takes SIGPIPE — and
+            # pipefail makes 141 the pipeline's status, turning "a PR already
+            # exists" into a hard failure of the create.
+            if grep -qi "already exists" <<<"${out}"; then
+              echo "::notice::A PR for ${BRANCH} already exists; leaving it as is."
+            else
+              printf '%s\n' "${out}" >&2
+              exit 1
+            fi
+          else
+            printf '%s\n' "${out}"
+          fi
+
+          {
+            echo "url=$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json url --jq .url)"
+            echo "number=$(gh pr view "${BRANCH}" --repo "${GITHUB_REPOSITORY}" --json number --jq .number)"
+          } >> "${GITHUB_OUTPUT}"
+
+      # At most one bump PR open at a time. Two releases in a week would
+      # otherwise leave two PRs proposing the same thing at different versions,
+      # and merging the older one would be undone by the newer immediately.
+      # Dependabot's model: supersede, say so, close.
+      - name: Close any bump PR this one supersedes
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          BRANCH: ${{ steps.guard.outputs.branch }}
+          NEW_URL: ${{ steps.pr.outputs.url }}
+          NEW_PR: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          superseded="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open \
+            --limit 100 --json number,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"${BRANCH_PREFIX}\")) | select(.headRefName != \"${BRANCH}\") | .number] | .[]")"
+
+          for number in ${superseded}; do
+            echo "Superseding #${number} with #${NEW_PR}"
+            gh pr comment "${number}" --repo "${GITHUB_REPOSITORY}" \
+              --body "Superseded by ${NEW_URL}, which bumps the facet further. Closing this one so only one shared-skills bump is open at a time."
+            gh pr close "${number}" --repo "${GITHUB_REPOSITORY}" --delete-branch
+          done

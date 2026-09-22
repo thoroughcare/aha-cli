@@ -509,7 +509,17 @@ jobs:
           # the delimiters it is given, so `-d ', '` would join with a comma and
           # a space alternately; the separator has to be one character.
           as_list() {
-            if [ -s "$1" ]; then paste -sd ',' "$1" | sed 's/,/, /g'; else printf '%s' '—'; fi
+            [ -s "$1" ] || { printf '%s' '—'; return 0; }
+            # `paste` reads a file, so unlike every other pipe left in this file
+            # its left-hand side can genuinely fail — and `sed` succeeds on
+            # whatever it gets, so the `|| exit` at the call site would never
+            # see it. Three reviewers found this independently after the
+            # pipefail correction; it is inert in practice (a temp file this
+            # same step wrote two lines up) but it is the last place the
+            # header's own rule was not applied, and a claim of "everywhere"
+            # should be true.
+            joined="$(paste -sd ',' "$1")" || return 1
+            printf '%s' "${joined}" | sed 's/,/, /g'
           }
 
           # Captured rather than substituted inline, for the same read-then-

@@ -628,9 +628,21 @@ jobs:
           # exactly the state this step exists to improve on and never worse
           # than not having run. Failing a job whose PR is already open and
           # correct would report the wrong thing about the run.
-          if ! labels="$(gh label list --repo "${GITHUB_REPOSITORY}" --limit 200 --json name --jq '.[].name')"; then
+          limit=1000
+          if ! labels="$(gh label list --repo "${GITHUB_REPOSITORY}" --limit "${limit}" --json name --jq '.[].name')"; then
             echo "::warning::Could not list labels on ${GITHUB_REPOSITORY}; leaving #${PR} unlabelled. This is a lookup failure, not an absent label."
             exit 0
+          fi
+
+          # "No match" and "the page ended before the match" are different
+          # answers, and a `--limit` silently conflates them — the same class of
+          # bug this file spent five review rounds closing everywhere else, so
+          # it does not get to survive here. A full page means the list may have
+          # been truncated, which is worth saying out loud even though no repo
+          # in the fleet is within two orders of magnitude of it.
+          count="$(printf '%s\n' "${labels}" | grep -c . || true)"
+          if [ "${count}" -ge "${limit}" ]; then
+            echo "::warning::${GITHUB_REPOSITORY} returned ${count} labels, the full page — the list may be truncated, so a missing match below may mean 'not fetched' rather than 'not present'."
           fi
 
           # `sort` so a repo carrying more than one spelling picks the same one
@@ -642,7 +654,19 @@ jobs:
             exit 0
           fi
 
-          gh pr edit "${PR}" --repo "${GITHUB_REPOSITORY}" --add-label "${name}" || exit
+          # Warn rather than `|| exit`, for the same reason the lookup above
+          # does — and the review round that caught this was right that a bare
+          # `|| exit` here contradicted the comment two paragraphs up. The PR is
+          # open and correct by this point; failing the job over a label would
+          # report the run as broken when its actual deliverable succeeded, and
+          # would not attach the label either. Note this is a **one-shot**: the
+          # duplicate-PR guard stops every later run before it reaches this
+          # step, so a transient failure leaves that one PR for a human to
+          # label — which is exactly the pre-existing state, never worse.
+          if ! gh pr edit "${PR}" --repo "${GITHUB_REPOSITORY}" --add-label "${name}"; then
+            echo "::warning::Could not apply '${name}' to #${PR}; leaving it unlabelled for a human to disposition."
+            exit 0
+          fi
           echo "Applied '${name}' to #${PR}."
 
       # At most one bump PR open at a time. Two releases in a week would

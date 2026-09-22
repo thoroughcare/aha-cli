@@ -155,7 +155,6 @@ jobs:
           ROBOT_GITHUB_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
           REQUESTED_TAG: ${{ inputs.tag }}
         run: |
-
           if [ ! -f facets.json ]; then
             echo "::error::No facets.json in ${GITHUB_REPOSITORY}; this repo does not consume the facet."
             exit 1
@@ -250,7 +249,7 @@ jobs:
           # unreleased ref on purpose — either way, silently rolling it back at
           # 23 past the hour is the wrong move. A hand dispatch is exempt,
           # because rolling a bad release back is exactly what it is for.
-          newer="$(printf '%s\n%s\n' "${current_tag}" "${target_tag}" | sort -V | tail -n 1)"
+          newer="$(printf '%s\n%s\n' "${current_tag}" "${target_tag}" | sort -V | tail -n 1)" || exit
           if [ "${by_hand}" = "false" ] && [ "${newer}" != "${target_tag}" ]; then
             echo "bump=false" >> "${GITHUB_OUTPUT}"
             echo "::warning::Pinned at ${current_tag}, which is ahead of the newest tag ${target_tag}. Leaving it alone."
@@ -288,11 +287,26 @@ jobs:
           # pushed and then died before `gh pr create`. Open the PR for what is
           # already there rather than rebuilding it — rebuilding would mean a
           # force-push, and this workflow force-pushes nothing.
-          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-            echo "proceed=adopt" >> "${GITHUB_OUTPUT}"
-            echo "::notice::${branch} exists on the remote with no PR; opening one for it."
-            exit 0
-          fi
+          #
+          # `--exit-code` gives 2 for "no matching ref" specifically, so the
+          # three answers stay three: found, genuinely absent, and couldn't
+          # ask. Folding the last two together would make a network blip look
+          # like a clean slate and push a branch that may already exist.
+          rc=0
+          git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1 || rc=$?
+          case "${rc}" in
+            0)
+              echo "proceed=adopt" >> "${GITHUB_OUTPUT}"
+              echo "::notice::${branch} exists on the remote with no PR; opening one for it."
+              exit 0
+              ;;
+            2)
+              ;;
+            *)
+              echo "::error::Could not check whether ${branch} exists on the remote (git ls-remote exited ${rc}). This is a lookup failure, not an absent branch."
+              exit 1
+              ;;
+          esac
 
           echo "proceed=true" >> "${GITHUB_OUTPUT}"
 
@@ -317,7 +331,6 @@ jobs:
           CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
         run: |
-
           # The CLI shells out to git itself, so the credential cannot be passed
           # per invocation — it has to be somewhere git will read. The runner is
           # ephemeral and single-tenant, and Actions masks the secret in logs.
@@ -380,7 +393,13 @@ jobs:
           # so that a later change to how the target is chosen turns "nothing
           # happened" into a warning rather than an empty commit and a PR with
           # no diff.
-          if [ -z "$(git status --porcelain)" ]; then
+          # Read, then interpret — the same reason as the orphan sweep's PR
+          # lookup. Inline in a test's condition, a failing `git status` would
+          # read as "no diff". Fail-safe rather than destructive here (a missed
+          # proposal, self-healing next hour), but one shape in two places
+          # should not be guarded in one of them and not the other.
+          status="$(git status --porcelain)" || exit
+          if [ -z "${status}" ]; then
             echo "changed=false" >> "${GITHUB_OUTPUT}"
             echo "::warning::${CURRENT_TAG} -> ${TARGET_TAG} produced no diff; nothing to propose."
             exit 0
@@ -520,7 +539,6 @@ jobs:
             workflow (WDOGS-530), which checks hourly whether ${{ env.FACET_REPO }} has a newer
             release than this repo is pinned to. It proposes; it never merges.
         run: |
-
           # Opened ready for review rather than as a draft: the change is
           # complete the moment the workflow makes it, and a draft is not
           # auto-reviewed. `gh` refuses to open a second PR for a branch that
@@ -577,12 +595,19 @@ jobs:
           NEW_URL: ${{ steps.pr.outputs.url }}
           NEW_PR: ${{ steps.pr.outputs.number }}
         run: |
-          # `set -u` is deliberately not in use (see the header), so the two
-          # values this step would do real damage with if they were ever empty
-          # are checked by hand. An empty prefix makes the match below match
-          # **every** open PR, and this step closes what it matches — that is
-          # precisely the class of mistake `-u` was catching for free, so it
-          # gets an explicit guard rather than a silent expansion.
+          # Guard the two values this step would do damage with if they were
+          # empty. Note what `-u` would and would not have done here: it fires
+          # on a variable that was never *assigned*, and both of these come
+          # from `env:`, so they are always bound even when empty — `-u` was
+          # never covering today's case. What it covered is a future typo
+          # (`${BRANCH_PREIFX}`), which now expands silently to empty, and this
+          # is where that would land.
+          #
+          # The blast radius here is smaller than in the orphan sweep: with an
+          # empty prefix every open PR becomes a candidate, but the release-tag
+          # regex below still has to match the whole head ref, so nothing
+          # reaches the close. The guard is cheap and the symmetry is worth
+          # more than the argument about which of the two is actually exposed.
           if [ -z "${BRANCH_PREFIX}" ] || [ -z "${TARGET_TAG}" ]; then
             echo "::error::Refusing to run with an empty BRANCH_PREFIX or TARGET_TAG."
             exit 1
@@ -608,7 +633,7 @@ jobs:
               continue
             fi
 
-            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)"
+            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)" || exit
             if [ "${tag}" = "${TARGET_TAG}" ] || [ "${oldest}" != "${tag}" ]; then
               echo "::notice::Leaving #${number} (${tag}) alone: it is not older than ${TARGET_TAG}."
               continue
@@ -635,12 +660,17 @@ jobs:
           BRANCH: ${{ steps.guard.outputs.branch }}
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
         run: |
-          # `set -u` is deliberately not in use (see the header), so the two
-          # values this step would do real damage with if they were ever empty
-          # are checked by hand. An empty prefix makes the match below match
-          # **every** branch in the repo, and this step deletes what it matches — that is
-          # precisely the class of mistake `-u` was catching for free, so it
-          # gets an explicit guard rather than a silent expansion.
+          # Guard the two values this step would do damage with if they were
+          # empty — and unlike the supersede step above, the exposure here is
+          # real rather than theoretical: an empty prefix makes the
+          # `git ls-remote --heads origin "refs/heads/*"` below enumerate
+          # **every branch in the repo** before the release-tag regex narrows
+          # it again, and this step deletes what survives that filter.
+          #
+          # `-u` would not have caught today's case (both come from `env:`, so
+          # they are bound even when empty); it would have caught a future
+          # typo'd name, which now expands silently to empty. Same guard covers
+          # both.
           if [ -z "${BRANCH_PREFIX}" ] || [ -z "${TARGET_TAG}" ]; then
             echo "::error::Refusing to run with an empty BRANCH_PREFIX or TARGET_TAG."
             exit 1
@@ -649,7 +679,7 @@ jobs:
           # Same split as the tag lookup: a failed `ls-remote` is not "no
           # orphans", so it aborts rather than quietly sweeping nothing.
           refs="$(git ls-remote --heads origin "refs/heads/${BRANCH_PREFIX}*")" || exit
-          heads="$(printf '%s\n' "${refs}" | awk '{ print $2 }' | sed 's#^refs/heads/##')"
+          heads="$(printf '%s\n' "${refs}" | awk '{ print $2 }' | sed 's#^refs/heads/##')" || exit
 
           for head in ${heads}; do
             [ "${head}" = "${BRANCH}" ] && continue
@@ -657,16 +687,30 @@ jobs:
 
             printf '%s' "${tag}" | grep -qE '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' || continue
 
-            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)"
+            oldest="$(printf '%s\n%s\n' "${tag}" "${TARGET_TAG}" | sort -V | head -n 1)" || exit
             [ "${oldest}" = "${tag}" ] && [ "${tag}" != "${TARGET_TAG}" ] || continue
 
             # Any PR at all, in any state, means the branch is someone's record
             # of a decision — the closed-unmerged case is the declined bump the
             # guard deliberately preserves.
-            if [ -n "$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${head}" \
-                        --state all --limit 1 --json number --jq '.[0].number // empty')" ]; then
-              continue
+            #
+            # **Read it, then interpret it.** Written as
+            # `if [ -n "$(gh pr list …)" ]`, a `gh` failure — a rate limit, an
+            # expired token, a transient API error — prints to stderr, leaves
+            # `$(…)` empty, and reads as "no PR was ever opened", which is the
+            # one answer that lets the delete below proceed. `-e` cannot help:
+            # a substitution inside a test's condition is invisible to it
+            # whatever flags are set, so this shape was equally swallowed back
+            # when the block still said `set -euo pipefail`. Deleting the
+            # branch behind an **open** PR closes that PR, so the failure mode
+            # is someone's reviewed work disappearing because an API call
+            # flaked. A lookup that did not succeed is not evidence of absence.
+            if ! pr_number="$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${head}" \
+                  --state all --limit 1 --json number --jq '.[0].number // empty')"; then
+              echo "::error::Could not check whether ${head} has a PR. Refusing to delete a branch on an unconfirmed lookup."
+              exit 1
             fi
+            [ -n "${pr_number}" ] && continue
 
             echo "Deleting orphaned branch ${head} (no PR ever opened for it)"
             git push origin --delete "${head}" || exit

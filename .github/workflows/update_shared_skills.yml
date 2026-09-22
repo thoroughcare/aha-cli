@@ -173,16 +173,41 @@ jobs:
               echo "::error::'${REQUESTED_TAG}' is not a facet tag (expected facet-v<something>)."
               exit 1
             fi
+            # The regex above constrains the *shape* and excludes anything that
+            # could escape a branch name; it does not know git's ref grammar, so
+            # `facet-v1..0` and a trailing `.` both pass it and are illegal refs.
+            # Let git answer that, here, rather than letting `git switch -c`
+            # fail six steps later with a raw error.
+            if ! git check-ref-format "refs/heads/${BRANCH_PREFIX}${REQUESTED_TAG}"; then
+              echo "::error::'${REQUESTED_TAG}' would make an invalid git ref (${BRANCH_PREFIX}${REQUESTED_TAG})."
+              exit 1
+            fi
             target_tag="${REQUESTED_TAG}"
             by_hand=true
             echo "Target tag given by hand: ${target_tag}"
           else
-            # `--refs` drops the peeled `^{}` duplicates. The grep keeps release
-            # tags only, so a `facet-v0.6.0-rc.1` is never proposed to a repo.
+            # Read the refs and filter them as two steps, not one pipeline.
+            # Folded together, a real failure here — a revoked token, a network
+            # blip, a rate limit — is swallowed by the downstream `grep`'s
+            # exit-1-on-no-match and then by the `|| true` that has to absorb
+            # it, and surfaces as "no facet-v tag found": indistinguishable from
+            # the facet genuinely having no releases. That is the same
+            # nobody-notices-it-stopped-working failure this workflow exists to
+            # prevent, so **"the command failed" and "the command found
+            # nothing" stay distinct**.
+            if ! refs="$(git ls-remote --tags --refs \
+                  "https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/${FACET_REPO}.git" \
+                  'refs/tags/facet-v*')"; then
+              echo "::error::Could not read tags from ${FACET_REPO}. This is an access or network failure, not an empty tag list — check that ROBOT_GITHUB_TOKEN is still granted to this repo and can read that one."
+              exit 1
+            fi
+
+            # `--refs` above drops the peeled `^{}` duplicates; the grep keeps
+            # release tags only, so a `facet-v0.6.0-rc.1` is never proposed to a
+            # repo on the schedule. `|| true` now only absorbs "no match", which
+            # the check below turns into its own message.
             target_tag="$(
-              git ls-remote --tags --refs \
-                "https://x-access-token:${ROBOT_GITHUB_TOKEN}@github.com/${FACET_REPO}.git" \
-                'refs/tags/facet-v*' \
+              printf '%s\n' "${refs}" \
                 | awk '{ print $2 }' \
                 | sed 's#^refs/tags/##' \
                 | grep -E '^facet-v[0-9]+\.[0-9]+\.[0-9]+$' \
@@ -193,7 +218,7 @@ jobs:
           fi
 
           if [ -z "${target_tag}" ]; then
-            echo "::error::No facet-v<x.y.z> tag found in ${FACET_REPO}."
+            echo "::error::${FACET_REPO} was read successfully but has no facet-v<x.y.z> release tag."
             exit 1
           fi
 
@@ -473,12 +498,16 @@ jobs:
             a hand copy differs byte-for-byte from an install — which is also why `facet install`
             writing only what changed makes this diff exactly the skills the release touched.
 
-            ### QE
+            ### Testing disposition
 
-            The diff is confined to `.claude/**` plus the two agent-tooling manifests, which
-            `AGENTS.md` § "QE dispositions are QE's call" names as a case for
-            **`not testable by QE`**. It is deliberately left unlabelled: the disposition is QE's
-            to apply, not this workflow's.
+            The diff is confined to `.claude/skills/**` and the two manifests that materialize it,
+            so there is no runtime behaviour to exercise — no request path, no schema, no
+            user-facing surface.
+
+            Whether that earns a "not testable" disposition, and what the label for it is called
+            here, is this repo's own convention. **This PR is deliberately left unlabelled**: a
+            disposition is a judgement someone makes about a diff they have read, and nothing has
+            read this one yet.
 
             ---
 

@@ -61,11 +61,24 @@ name: Update shared skills
 # into that repo too, its rule is the one all seven copies follow. A command
 # that must succeed is suffixed `|| exit` — bare, so it re-uses `$?` and aborts
 # with the real exit code rather than a flattened `1`; the last command in a
-# block needs none, its status already being the block's. Actions runs `run:`
-# under `bash -e -o pipefail` regardless, so this is about not *relying* on
-# flags that are silently disabled inside command substitutions, on the left of
-# `&&`/`||`, and in `if`/`while` conditions — one of which cost an unreachable
-# error message in this very file during review.
+# block needs none, its status already being the block's.
+#
+# **A `run:` step with no `shell:` key runs under `bash -e {0}` — `-e` only, no
+# `pipefail`.** The `--noprofile --norc -e -o pipefail` seen in some job logs
+# comes from steps that set `shell: bash` explicitly, which composite actions do
+# and this file does not. Verified against a real run log, after an earlier
+# revision of this comment asserted the opposite and a review round reasoned
+# from it.
+#
+# The consequence is the rule that matters: **a pipeline reports only its last
+# command**, so `cmd | filter` hides a failing `cmd` entirely — `jq`, `awk` and
+# `sed` all succeed on empty input, and a `|| exit` on such a pipeline watches
+# the wrong process. So anything whose failure must be seen is **read into a
+# variable and checked on its own line**, then filtered. That is why the tag
+# lookup, the supersede step and the orphan sweep are each written as two
+# statements rather than one pipe. Before adding a `| jq`, `| awk` or `| grep`,
+# ask whether the left-hand side can fail for a reason worth knowing about; if
+# it can, it does not belong in a pipe here.
 #
 # Background: `docs/tech-guides/facet-skills.md` in tcare, the facet's own
 # `docs/ROLLOUT.md`, and `thoroughcare:docs/ci-cd/ci.md` §11 for the shell rule.
@@ -215,8 +228,13 @@ jobs:
 
             # `--refs` above drops the peeled `^{}` duplicates; the grep keeps
             # release tags only, so a `facet-v0.6.0-rc.1` is never proposed to a
-            # repo on the schedule. `|| true` now only absorbs "no match", which
-            # the check below turns into its own message.
+            # repo on the schedule. `refs` is already known-good by here, so
+            # the only thing left to go wrong is "no match" — and with no
+            # `pipefail` the pipeline reports `tail`, which succeeds on empty
+            # input anyway. The `|| true` is belt-and-braces rather than
+            # load-bearing; an earlier round called it load-bearing on the
+            # assumption pipefail was on, which it is not. Either way an empty
+            # result is caught by its own check below.
             target_tag="$(
               printf '%s\n' "${refs}" \
                 | awk '{ print $2 }' \
@@ -433,12 +451,20 @@ jobs:
           # HEAD and now. A file changing inside a skill is an update; the
           # directory appearing or disappearing is an add or a removal, and
           # those are the two a reviewer must not miss.
-          git ls-tree -d --name-only HEAD -- .claude/skills/ \
-            | sed 's#^\.claude/skills/##' | sort -u > "${work}/before"
-          find .claude/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
-            | sort -u > "${work}/after"
-          git status --porcelain -- .claude/skills \
-            | awk '{ print $NF }' | cut -d/ -f3 | sort -u > "${work}/touched"
+          # Each read on its own line before it is filtered. In a pipe its
+          # failure would be invisible (no `pipefail`, see the header) and the
+          # empty output would read as "no skills at HEAD" or "nothing touched"
+          # — which would not break the bump, but would put a wrong
+          # added/removed/updated list in the PR body, the one part of it a
+          # reviewer is meant to take on trust.
+          tree="$(git ls-tree -d --name-only HEAD -- .claude/skills/)" || exit
+          printf '%s\n' "${tree}" | sed 's#^\.claude/skills/##' | sort -u > "${work}/before"
+
+          dirs="$(find .claude/skills -mindepth 1 -maxdepth 1 -type d -printf '%f\n')" || exit
+          printf '%s\n' "${dirs}" | sort -u > "${work}/after"
+
+          porcelain="$(git status --porcelain -- .claude/skills)" || exit
+          printf '%s\n' "${porcelain}" | awk '{ print $NF }' | cut -d/ -f3 | sort -u > "${work}/touched"
 
           comm -13 "${work}/before" "${work}/after" > "${work}/added"
           comm -23 "${work}/before" "${work}/after" > "${work}/removed"
@@ -691,6 +717,7 @@ jobs:
           TARGET_TAG: ${{ steps.resolve.outputs.target_tag }}
           NEW_URL: ${{ steps.pr.outputs.url }}
           NEW_PR: ${{ steps.pr.outputs.number }}
+          PR_LIMIT: "100"
         run: |
           # Guard the two values this step would do damage with if they were
           # empty. Note what `-u` would and would not have done here: it fires
@@ -717,8 +744,25 @@ jobs:
           # variable, so the branch name would have to be spliced into the
           # filter — and it derives from a dispatch input, where one `\"` makes
           # the program malformed.
-          candidates="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open \
-            --limit 100 --json number,headRefName \
+          # Read, then filter — two statements, not one pipe. With no
+          # `pipefail` (see the header) a `gh pr list` failure writes nothing,
+          # `jq` succeeds on the empty stream, and `|| exit` — watching only
+          # `jq` — never fires, so a rate limit or a revoked token would read as
+          # "there is nothing to supersede". Bounded (a stale PR stays open
+          # rather than anything being lost), but it is the same shape this file
+          # splits apart in the tag lookup and the orphan sweep.
+          open_prs="$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open \
+            --limit "${PR_LIMIT}" --json number,headRefName)" || exit
+
+          # A full page may be truncated, and "not fetched" is not "not
+          # present" — the same distinction the label lookup draws. An older
+          # bump PR past the page boundary would quietly stop being superseded.
+          open_count="$(printf '%s' "${open_prs}" | jq -r 'length')" || exit
+          if [ "${open_count}" -ge "${PR_LIMIT}" ]; then
+            echo "::warning::${GITHUB_REPOSITORY} returned ${open_count} open PRs, the full page — the list may be truncated, so an older bump PR beyond it would not be superseded."
+          fi
+
+          candidates="$(printf '%s' "${open_prs}" \
             | jq -r --arg prefix "${BRANCH_PREFIX}" --arg branch "${BRANCH}" \
                 '.[] | select(.headRefName | startswith($prefix))
                      | select(.headRefName != $branch)

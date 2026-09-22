@@ -550,13 +550,15 @@ jobs:
             ### Testing disposition
 
             The diff is confined to `.claude/skills/**` and the two manifests that materialize it,
-            so there is no runtime behaviour to exercise — no request path, no schema, no
-            user-facing surface.
+            and nothing else — no request path, no schema, no user-facing surface, so there is no
+            runtime behaviour for QE to exercise.
 
-            Whether that earns a "not testable" disposition, and what the label for it is called
-            here, is this repo's own convention. **This PR is deliberately left unlabelled**: a
-            disposition is a judgement someone makes about a diff they have read, and nothing has
-            read this one yet.
+            Each of these repos states that as a **path fact** rather than a judgement, precisely
+            so it can be settled without reading the diff — *"turns on where the diff is, never on
+            how testable it looks to you"*. This run therefore applies the repo's own
+            "not testable" label where the repo has one, and applies nothing where it doesn't.
+            If the label is absent above, this repo has no such label rather than the run having
+            declined to set it.
 
             ---
 
@@ -596,6 +598,52 @@ jobs:
             echo "url=${url}"
             echo "number=${number}"
           } >> "${GITHUB_OUTPUT}"
+
+      # Apply the repo's own "not testable by QE/QA" label, where it has one.
+      #
+      # This is a path fact, not a judgement. Every repo in the fleet words its
+      # carve-out as a question about *where the diff is* — thoroughcare's says
+      # so outright, "All four turn on where the diff is, never on how testable
+      # it looks to you" — and the commit above stages exactly `facets.json`,
+      # `facets.lock` and `.claude/skills/`, which is the agent-tooling carve-out
+      # verbatim. A run settling that mechanically is what a path fact is for;
+      # the QE-owned *outcome* labels (`QE Passed` / `QE Failed`) remain
+      # untouched here and always.
+      #
+      # The name differs per repo — `Not testable by QE`, `not testable by QE`,
+      # `not testable by QA` — so this matches case-insensitively against the
+      # repo's real labels and uses the exact name it finds, rather than
+      # hardcoding one into a file that has to be byte-identical across seven.
+      # Four of the seven have no such label at all; there it does nothing.
+      - name: Apply this repo's not-testable label, if it has one
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ secrets.ROBOT_GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          # A failed lookup warns and carries on rather than failing the job,
+          # which is the opposite of the orphan sweep below — and deliberately
+          # so. There, an unconfirmed answer would delete a branch; here the
+          # worst case is a label gate left red for a human to clear, which is
+          # exactly the state this step exists to improve on and never worse
+          # than not having run. Failing a job whose PR is already open and
+          # correct would report the wrong thing about the run.
+          if ! labels="$(gh label list --repo "${GITHUB_REPOSITORY}" --limit 200 --json name --jq '.[].name')"; then
+            echo "::warning::Could not list labels on ${GITHUB_REPOSITORY}; leaving #${PR} unlabelled. This is a lookup failure, not an absent label."
+            exit 0
+          fi
+
+          # `sort` so a repo carrying more than one spelling picks the same one
+          # every run rather than whichever the API happened to return first.
+          name="$(printf '%s\n' "${labels}" | grep -iE '^not testable by (qe|qa)$' | sort | head -n 1 || true)"
+
+          if [ -z "${name}" ]; then
+            echo "::notice::${GITHUB_REPOSITORY} has no not-testable-by-QE/QA label; leaving #${PR} unlabelled."
+            exit 0
+          fi
+
+          gh pr edit "${PR}" --repo "${GITHUB_REPOSITORY}" --add-label "${name}" || exit
+          echo "Applied '${name}' to #${PR}."
 
       # At most one bump PR open at a time. Two releases in a week would
       # otherwise leave two PRs proposing the same thing at different versions,
